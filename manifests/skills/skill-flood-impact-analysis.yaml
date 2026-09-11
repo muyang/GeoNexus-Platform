@@ -1,0 +1,39 @@
+id: skill.flood-impact-analysis
+name: Flood Impact Analysis
+version: 0.1.0
+type: GeoSkillCapability
+description: Derives flood map, affected population and crop-loss estimate from local water extent data.
+inputs:
+  region:
+    type: geojson_or_named_region
+    required: true
+  date_range:
+    type: string
+    required: true
+outputs:
+  flood_map:
+    type: cog
+  affected_population:
+    type: number
+  crop_loss_estimate_usd:
+    type: number
+runtime:
+  engine: fastapi
+  container: geonexus/geoskill-flood-impact:0.1.0
+  execution_mode: near-data
+steps:
+  - validate_region
+  - retrieve_water_extent
+  - flood_segmentation
+  - overlay_population_and_crop_layers
+  - generate_derived_report
+dependencies:
+  - data.sentinel-water-extent
+  - model.flood-segmentation-v2
+  - policy.data-sovereignty-asean
+policy:
+  raw_data_export: false
+  allowed_outputs:
+    - derived_report
+    - derived_map
+    - aggregate_statistics

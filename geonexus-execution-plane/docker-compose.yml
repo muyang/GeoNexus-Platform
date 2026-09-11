@@ -1,0 +1,57 @@
+# =============================================================
+# GeoNexus Execution Plane — Docker Compose
+# =============================================================
+# Java 团队使用方式：
+#   cp .env.example .env
+#   # 编辑 .env 填入 OGE 凭证和 LLM API Key
+#   docker compose up -d
+#   curl http://127.0.0.1:8787/health
+# =============================================================
+
+services:
+  execution-plane:
+    # 生产环境使用私有镜像仓库
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: geonexus-execution-plane:1.0.0
+    container_name: geonexus-execution-plane
+    restart: unless-stopped
+    ports:
+      - "8787:8787"   # GeoMCP — Java 后台通过此端口调用
+      - "8790:8790"   # Registry — 可选的，供调试
+      - "8900:8900"   # Web BFF — 可选的，供门户前端
+    environment:
+      # ── 核心配置 ──
+      GEONEXUS_GEOMCP_PORT: 8787
+      GEONEXUS_REGISTRY_PORT: 8790
+      GEONEXUS_REGISTRY_MODE: embedded
+      GEONEXUS_NODE_API_KEY: ${GEONEXUS_NODE_API_KEY:-default-node-key}
+      GEONEXUS_WORKDIR: /data/geonexus
+
+      # ── OGE 计算中心（可选） ──
+      # 如果不需要 OGE 能力，留空即可
+      GEONEXUS_OGE_ENDPOINT: ${GEONEXUS_OGE_ENDPOINT:-}
+      GEONEXUS_OGE_USERNAME: ${GEONEXUS_OGE_USERNAME:-}
+      GEONEXUS_OGE_PASSWORD: ${GEONEXUS_OGE_PASSWORD:-}
+      GEONEXUS_OGE_CLIENT_ID: ${GEONEXUS_OGE_CLIENT_ID:-}
+      GEONEXUS_OGE_CLIENT_SECRET: ${GEONEXUS_OGE_CLIENT_SECRET:-}
+
+      # ── LLM（可选，用于 GeoAgent 自然语言目标翻译） ──
+      GEONEXUS_LLM_API_KEY: ${GEONEXUS_LLM_API_KEY:-}
+      GEONEXUS_LLM_BASE_URL: ${GEONEXUS_LLM_BASE_URL:-}
+      GEONEXUS_LLM_MODEL: ${GEONEXUS_LLM_MODEL:-gpt-4o-mini}
+
+      # ── 日志 ──
+      GEONEXUS_LOG_LEVEL: ${GEONEXUS_LOG_LEVEL:-INFO}
+    volumes:
+      - geonexus-data:/data/geonexus
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  geonexus-data:

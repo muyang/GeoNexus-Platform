@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoNexus Management Backend</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--accent:#38bdf8;--green:#4ade80;--red:#f87171;--amber:#fbbf24;--text:#e2e8f0;--muted:#94a3b8;--border:#334155}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:20px;color:var(--accent)}
+nav{display:flex;gap:8px}
+nav button{padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:14px;transition:all .2s}
+nav button:hover,nav button.active{background:var(--accent);border-color:var(--accent);color:#0f172a}
+main{padding:24px;max-width:1400px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px}
+.card h2{font-size:16px;margin-bottom:12px;color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center}
+.stat .value{font-size:28px;font-weight:bold}
+.stat .label{font-size:12px;color:var(--muted);margin-top:4px}
+.stat.healthy .value{color:var(--green)}
+.stat.warning .value{color:var(--amber)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px;border-bottom:2px solid var(--border);font-weight:600;white-space:nowrap}
+td{padding:8px;border-bottom:1px solid var(--border);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-draft{background:#334155;color:var(--muted)}
+.badge-pending{background:var(--amber);color:#0f172a}
+.badge-approved{background:var(--green);color:#0f172a}
+.badge-rejected{background:var(--red);color:#fff}
+.badge-active{background:var(--green);color:#0f172a}
+.badge-error{background:var(--red);color:#fff}
+input,select,textarea,button{padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px}
+button.btn{padding:8px 20px;background:var(--accent);color:#0f172a;border:none;font-weight:600;cursor:pointer;border-radius:6px;transition:opacity .2s}
+button.btn:hover{opacity:.85}
+button.small{padding:4px 10px;font-size:12px;background:var(--bg);color:var(--accent);border:1px solid var(--accent)}
+button.danger{color:var(--red);border-color:var(--red)}
+.form-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.code{font-family:monospace;font-size:12px;background:#0f172a;padding:2px 6px;border-radius:4px}
+pre{background:#0f172a;border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;overflow:auto;max-height:300px}
+.hidden{display:none}
+#toast{position:fixed;top:16px;right:16px;padding:12px 20px;border-radius:8px;font-size:14px;z-index:999;opacity:0;transition:opacity .3s}
+#toast.show{opacity:1}
+#toast.success{background:var(--green);color:#0f172a}
+#toast.error{background:var(--red);color:#fff}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌍 GeoNexus</h1>
+  <nav>
+    <button class="active" onclick="switchTab('dashboard')">仪表盘</button>
+    <button onclick="switchTab('geocards')">GeoCard</button>
+    <button onclick="switchTab('oge')">OGE 凭证</button>
+    <button onclick="switchTab('execution')">NDVI 执行</button>
+    <button onclick="switchTab('api')">API 测试</button>
+  </nav>
+</header>
+
+<main id="main"></main>
+<div id="toast"></div>
+
+<script>
+const API = '';
+function toast(msg,type='success'){const t=document.getElementById('toast');t.textContent=msg;t.className=type+' show';setTimeout(()=>t.className='',3000)}
+
+function switchTab(tab){
+  document.querySelectorAll('nav button').forEach((b,i,a)=>{
+    b.classList.toggle('active',b.textContent.trim()===document.querySelector(`nav button:nth-child(${[...a].indexOf(b)+1})`).textContent.trim()||false)
+  });
+  const tabs={dashboard:'仪表盘',geocards:'GeoCard',oge:'OGE 凭证',execution:'NDVI 执行',api:'API 测试'};
+  const idx=Object.keys(tabs).indexOf(tab);
+  document.querySelectorAll('nav button')[idx]?.classList.add('active');
+  const fn={dashboard:renderDashboard,geocards:renderGeoCards,oge:renderOge,execution:renderExecution,api:renderApi};
+  (fn[tab]||renderDashboard)();
+}
+
+async function apiGet(path){return (await fetch(API+path)).json()}
+async function apiPost(path,body){return (await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}
+async function apiDel(path){await fetch(API+path,{method:'DELETE'})}
+
+// ── Dashboard ──
+async function renderDashboard(){
+  let health,caps;
+  try{health=await apiGet('/mogan/geocard/execution-plane/health')}catch(e){health={status:'down'}}
+  try{caps=await apiGet('/mogan/geocard/execution-plane/capabilities')}catch(e){caps={skills:[],methods:[]}}
+  const cards=await apiGet('/mogan/geocard/list')||[];
+  document.getElementById('main').innerHTML=`
+    <div class="grid4">
+      <div class="stat ${health.status==='ok'?'healthy':'warning'}"><div class="value">${health.status||'down'}</div><div class="label">执行面状态</div></div>
+      <div class="stat"><div class="value">${caps.skills?.length||0}</div><div class="label">已注册技能</div></div>
+      <div class="stat"><div class="value">${cards.length}</div><div class="label">GeoCard 数量</div></div>
+      <div class="stat"><div class="value">${caps.methods?.length||0}</div><div class="label">GeoMCP 方法</div></div>
+    </div>
+    <div class="card"><h2>执行面详情</h2><pre>${JSON.stringify({health,caps},null,2).slice(0,500)}</pre></div>
+  `;
+}
+
+// ── GeoCards ──
+async function renderGeoCards(){
+  const cards=await apiGet('/mogan/geocard/list')||[];
+  const rows=cards.map(c=>`<tr><td><span class="code">${c.id}</span></td><td>${c.title}</td><td>${c.assetType}</td><td>${c.region}</td><td><span class="badge badge-${c.status}">${c.status}</span></td><td>${c.createTime?.slice(0,10)||''}</td><td><button class="small" onclick="approveCard('${c.id}')">✓</button> <button class="small danger" onclick="deleteCard('${c.id}')">✗</button></td></tr>`).join('');
+  document.getElementById('main').innerHTML=`
+    <div class="card">
+      <h2>GeoCard 管理</h2>
+      <div class="form-row">
+        <input placeholder="搜索..." id="search" style="flex:1">
+        <button class="btn" onclick="renderGeoCards()">搜索</button>
+      </div>
+      <table><thead><tr><th>ID</th><th>标题</th><th>类型</th><th>区域</th><th>状态</th><th>创建</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+  `;
+}
+
+// ── OGE ──
+async function renderOge(){
+  let creds=[];
+  try{creds=await apiGet('/mogan/oge/credential/list')||[]}catch(e){}
+  const rows=creds.map(c=>`<tr><td><span class="code">${c.credentialId}</span></td><td>${c.endpoint}</td><td>${c.username}</td><td><span class="badge badge-${c.status}">${c.status}</span></td><td>${c.lastSyncAt||'-'}</td><td><button class="small" onclick="syncCred('${c.credentialId}')">⤓ 下发</button> <button class="small danger" onclick="deleteCred('${c.credentialId}')">✗</button></td></tr>`).join('');
+  document.getElementById('main').innerHTML=`
+    <div class="card">
+      <h2>OGE 凭证管理</h2>
+      <div class="form-row">
+        <input placeholder="OGE API 地址" id="oge-endpoint">
+        <input placeholder="用户名" id="oge-user">
+        <input placeholder="密码" id="oge-pass" type="password">
+        <input placeholder="节点ID" id="oge-node">
+        <button class="btn" onclick="saveCred()">保存</button>
+      </div>
+      <table><thead><tr><th>凭证ID</th><th>Endpoint</th><th>用户名</th><th>状态</th><th>最后同步</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+  `;
+}
+
+// ── NDVI Execution ──
+async function renderExecution(){
+  document.getElementById('main').innerHTML=`
+    <div class="card">
+      <h2>NDVI 执行（Java → GeoMCP → Python 执行面）</h2>
+      <div class="form-row">
+        <input placeholder="红光波段路径" id="red-path">
+        <input placeholder="近红外波段路径" id="nir-path">
+        <input placeholder="输出路径（可选）" id="out-path">
+        <button class="btn" onclick="execNDVI()">执行 NDVI</button>
+      </div>
+      <pre id="ndvi-result">等待执行...</pre>
+    </div>
+    <div class="card">
+      <h2>NDVI 变化检测</h2>
+      <div class="form-row">
+        <input placeholder="NDVI A (早期)" id="ndvi-a">
+        <input placeholder="NDVI B (后期)" id="ndvi-b">
+        <button class="btn" onclick="execNDVIChange()">执行变化检测</button>
+      </div>
+      <pre id="change-result">等待执行...</pre>
+    </div>
+  `;
+}
+
+// ── API Test ──
+async function renderApi(){
+  document.getElementById('main').innerHTML=`
+    <div class="card"><h2>API 端点速览</h2><pre>
+GET  /mogan/geocard/list
+GET  /mogan/geocard/search?keyword=&assetType=&region=
+GET  /mogan/geocard/{id}
+POST /mogan/geocard
+POST /mogan/geocard/{id}/submit
+POST /mogan/geocard/{id}/approve
+POST /mogan/geocard/{id}/reject
+GET  /mogan/geocard/execution-plane/health
+GET  /mogan/geocard/execution-plane/capabilities
+POST /mogan/geocard/execute/ndvi         {"red":"...", "nir":"..."}
+POST /mogan/geocard/execute/ndvi-change  {"ndvi_a":"...", "ndvi_b":"..."}
+GET  /mogan/oge/credential/list
+POST /mogan/oge/credential
+POST /mogan/oge/credential/{id}/sync
+DELETE /mogan/oge/credential/{id}
+GET  /h2-console</pre></div>
+  `;
+}
+
+// ── Actions ──
+async function approveCard(id){await apiPost(`/mogan/geocard/${id}/approve`);toast('已通过');renderGeoCards()}
+async function deleteCard(id){await apiDel(`/mogan/geocard/${id}`);toast('已删除');renderGeoCards()}
+
+async function saveCred(){
+  const body={endpoint:q('#oge-endpoint'), username:q('#oge-user'), password:q('#oge-pass'), nodeId:q('#oge-node')};
+  await apiPost('/mogan/oge/credential',body);toast('凭证已保存');renderOge();
+}
+async function syncCred(id){
+  const r=await apiPost(`/mogan/oge/credential/${id}/sync`);toast(r.status==='ok'?'同步成功':'同步失败: '+r.error, r.status==='ok'?'success':'error');
+  renderOge();
+}
+async function deleteCred(id){await apiDel(`/mogan/oge/credential/${id}`);toast('已删除');renderOge()}
+
+async function execNDVI(){
+  const body={red:q('#red-path'),nir:q('#nir-path'),output:q('#out-path')};
+  const r=await apiPost('/mogan/geocard/execute/ndvi',body);
+  document.getElementById('ndvi-result').textContent=JSON.stringify(r,null,2);
+}
+async function execNDVIChange(){
+  const body={ndvi_a:q('#ndvi-a'),ndvi_b:q('#ndvi-b')};
+  const r=await apiPost('/mogan/geocard/execute/ndvi-change',body);
+  document.getElementById('change-result').textContent=JSON.stringify(r,null,2);
+}
+
+function q(id){return document.getElementById(id)?.value||''}
+
+// init
+switchTab('dashboard');
+</script>
+</body>
+</html>

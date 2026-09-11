@@ -1,0 +1,73 @@
+# ============================================================
+# GeoNexus Management Backend — 应用配置
+# ============================================================
+# MVP 阶段：H2 内存数据库 + 默认 dev profile
+# 生产环境：激活 prod profile（PostgreSQL）
+# ============================================================
+
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: geonexus-mgbackend
+
+  # ---- H2 开发数据库 ----
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:geonexus_mg;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  sql:
+    init:
+      mode: always
+
+# ---- MyBatis-Plus ----
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: assign_id
+      logic-delete-field: delFlag
+      logic-delete-value: '2'
+      logic-not-delete-value: '0'
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# ---- GeoNexus 执行面 ----
+geonexus:
+  execution-plane:
+    url: ${GEONEXUS_EXECUTION_PLANE_URL:http://127.0.0.1:8787}
+    api-key: ${GEONEXUS_NODE_API_KEY:default-node-key}
+
+# ---- 日志 ----
+logging:
+  level:
+    com.geonexus: DEBUG
+    org.springframework.security: WARN
+
+---
+# ============================================================
+# 生产环境 profile（PostgreSQL）
+# ============================================================
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DB:geonexus_mg}
+    username: ${PG_USER:geonexus}
+    password: ${PG_PASSWORD:geonexus}
+  h2:
+    console:
+      enabled: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geonexus-execution-plane"
+version = "1.0.0"
+description = "GeoNexus Execution Plane — 统一入口：GeoMCP + Registry + GeoAgent + OGE"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "geonexus-sdk[mcp]>=1.0.0",
+    "uvicorn>=0.27",
+]
+
+[project.scripts]
+geonexus-execution-plane = "geonexus_execution_plane.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

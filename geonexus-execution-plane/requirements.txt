@@ -1,0 +1,4 @@
+# geonexus-execution-plane 依赖
+# 生产环境通过 Docker 安装，开发环境用 pip install -e .
+geonexus-sdk[mcp]>=1.0.0
+uvicorn>=0.27

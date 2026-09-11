@@ -1,0 +1,25 @@
+id: geonode-mekong
+name: Mekong GeoNode
+type: GeoNode
+region: Southeast Asia
+operator: Delta Resilience Lab
+sovereignty:
+  data_residency: local
+  export_policy: derived-output-only
+runtime:
+  mode: standalone
+  gateway: http://localhost:8100
+  execution_engine: fastapi-threaded-mvp
+capabilities:
+  - data.sentinel-water-extent
+  - model.flood-segmentation-v2
+  - skill.flood-impact-analysis
+  - policy.data-sovereignty-asean
+endpoints:
+  health: /health
+  manifest: /node/manifest
+  capabilities: /capabilities
+  jobs: /jobs
+trust:
+  level: verified
+  validation: seed-node

@@ -1,0 +1,36 @@
+{
+  "type": "FeatureCollection",
+  "name": "Mekong sample flood exposure grid",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-001", "flood_depth_m": 0.8, "population": 18000, "crop_value_usd": 1200000},
+      "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-002", "flood_depth_m": 0.35, "population": 9000, "crop_value_usd": 820000},
+      "geometry": {"type": "Polygon", "coordinates": [[[4, 0], [8, 0], [8, 4], [4, 4], [4, 0]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-003", "flood_depth_m": 1.2, "population": 26000, "crop_value_usd": 2100000},
+      "geometry": {"type": "Polygon", "coordinates": [[[0, 4], [4, 4], [4, 8], [0, 8], [0, 4]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-004", "flood_depth_m": 0.1, "population": 4000, "crop_value_usd": 320000},
+      "geometry": {"type": "Polygon", "coordinates": [[[4, 4], [8, 4], [8, 8], [4, 8], [4, 4]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-005", "flood_depth_m": 0.95, "population": 22000, "crop_value_usd": 1600000},
+      "geometry": {"type": "Polygon", "coordinates": [[[8, 0], [12, 0], [12, 4], [8, 4], [8, 0]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"id": "mk-006", "flood_depth_m": 0.55, "population": 15500, "crop_value_usd": 970000},
+      "geometry": {"type": "Polygon", "coordinates": [[[8, 4], [12, 4], [12, 8], [8, 8], [8, 4]]]}
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+services:
+  postgis:
+    image: pgvector/pgvector:pg16
+    container_name: geonexus-postgis
+    environment:
+      POSTGRES_DB: geonexus
+      POSTGRES_USER: geonexus
+      POSTGRES_PASSWORD: geonexus
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: geonexus-redis
+    ports:
+      - "6380:6379"
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: geonexus-temporal
+    environment:
+      DB: sqlite
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+
+  minio:
+    image: minio/minio:latest
+    container_name: geonexus-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: geonexus
+      MINIO_ROOT_PASSWORD: geonexus123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  geonode-runtime:
+    build:
+      context: ..
+      dockerfile: services/geonode-runtime/Dockerfile
+    container_name: geonexus-geonode-runtime
+    ports:
+      - "8100:8100"
+    environment:
+      POSTGIS_DSN: postgresql://geonexus:geonexus@postgis:5432/geonexus
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: geonexus
+      MINIO_SECRET_KEY: geonexus123
+      MINIO_BUCKET: geonexus-artifacts
+      WORKFLOW_ENGINE: local
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: geonexus-geoskill
+    volumes:
+      - ../manifests:/app/manifests:ro
+      - ../outputs:/app/outputs
+    depends_on:
+      - postgis
+      - temporal
+
+  geonode-temporal-worker:
+    build:
+      context: ..
+      dockerfile: services/geonode-runtime/Dockerfile
+      args:
+        INSTALL_TEMPORAL: "true"
+    container_name: geonexus-geonode-temporal-worker
+    command: python -m app.temporal_worker --run
+    environment:
+      POSTGIS_DSN: postgresql://geonexus:geonexus@postgis:5432/geonexus
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: geonexus-geoskill
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: geonexus
+      MINIO_SECRET_KEY: geonexus123
+      MINIO_BUCKET: geonexus-artifacts
+    volumes:
+      - ../manifests:/app/manifests:ro
+      - ../outputs:/app/outputs
+    depends_on:
+      - postgis
+      - temporal
+      - minio
+
+volumes:
+  postgis-data:
+  minio-data:
