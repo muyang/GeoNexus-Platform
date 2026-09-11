@@ -1,199 +1,152 @@
-# GeoNexus
+# GeoNexus Platform
 
-GeoNexus is a federated GeoAI capability network MVP.
+> ☕ Java 管"管"，🐍 Python 管"算" — 联邦地理空间智能网络完整平台
 
-It demonstrates:
-- GeoMCP protocol routing
-- GeoCapability Registry
-- GeoSkill discovery and orchestration
-- GeoAgent planning
-- GeoKG graph relationships
-- GeoNode federation and policy routing
-- Product-style task routing and detail views
-- SQLite-backed persistence for tasks, jobs, and events
+GeoNexus Platform 是 GeoNexus 的完整应用层，包含 Java 管理后台、Python 执行面、
+Node.js 控制台、GeoNode Runtime 服务及全部文档和部署配置。
 
-## Run
+**依赖 SDK**: `geonexus-sdk>=1.0.0`（从 PyPI 安装）
+
+---
+
+## 快速开始
+
+### 一键启动
 
 ```bash
-npm start
+# 启动全部服务（Python 执行面 + Java mgbackend）
+./dev.sh all
+
+# 单独启动
+./dev.sh python    # :8787 执行面
+./dev.sh java      # :8080 管理后台
+./dev.sh test      # 运行全部测试
+./dev.sh stop      # 停止所有服务
 ```
 
-Then open:
+### 环境配置
+
+```bash
+export JAVA_HOME=$(/usr/libexec/java_home -v17)
+export PATH="$JAVA_HOME/bin:$PATH"
+pip install "geonexus-sdk>=1.0.0"
+```
+
+---
+
+## 架构
 
 ```text
-http://localhost:3100
+┌───────────────────────────────────┐
+│  ☕ Java 控制面 (mgbackend :8080)  │
+│  GeoCard CRUD · OGE 凭证 · 审计   │
+│  GeoMCPClient ──────────────────┐ │
+└─────────────────────────────────│─┘
+                                  │ GeoMCP JSON-RPC 2.0
+┌─────────────────────────────────│─┐
+│  🐍 Python 计算面 (:8787)       │ │
+│  NDVI handler · GAAG · OGE     │ │
+└─────────────────────────────────┘ │
 ```
 
-If that port is occupied, GeoNexus automatically tries the next free port.
+### 服务端点
 
-If `3001` is taken, set a custom port:
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 🌐 管理后台前端 | http://localhost:8080/ | GeoCard / OGE / NDVI 执行 |
+| ☕ REST API | http://localhost:8080/mogan/ | 全部 API |
+| 🐍 执行面 | http://127.0.0.1:8787/health | GeoMCP Server |
+| 📊 H2 控制台 | http://localhost:8080/h2-console | 数据库调试 |
+
+### Java mgbackend API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/mogan/geocard/list` | GeoCard 列表 |
+| GET | `/mogan/geocard/search?keyword=&assetType=&region=` | 全文搜索 |
+| POST | `/mogan/geocard` | 创建草稿 |
+| POST | `/mogan/geocard/{id}/submit` | 提交审核 (draft→pending) |
+| POST | `/mogan/geocard/{id}/approve` | 审核通过 (pending→approved) |
+| POST | `/mogan/geocard/execute/ndvi` | 执行 NDVI（Java→Python） |
+| POST | `/mogan/geocard/execute/ndvi-change` | 变化检测 |
+| GET | `/mogan/geocard/execution-plane/health` | 查询执行面健康 |
+| GET | `/mogan/oge/credential/list` | OGE 凭证列表 |
+| POST | `/mogan/oge/credential` | 创建/更新凭证 |
+| POST | `/mogan/oge/credential/{id}/sync` | 下发凭证到执行面 |
+| DELETE | `/mogan/oge/credential/{id}` | 删除凭证 |
+
+### Python 执行面端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| GET | `/capabilities` | 能力列表 |
+| POST | `/geomcp` | GeoMCP JSON-RPC 分发 |
+
+---
+
+## 项目结构
+
+```
+├── geonexus-execution-plane/     # Python 执行面
+│   ├── src/handlers.py           # NDVI/变化检测真实 handler (rasterio+numpy)
+│   ├── src/skills.py             # 4 个内建技能
+│   ├── src/main.py               # 核心编排器
+│   └── tests/                    # 20 个测试全部通过
+│
+├── mgbackend/                    # Java 管理后台 (RuoYi 风格)
+│   ├── src/main/java/.../
+│   │   ├── client/GeoMCPClient.java    # 200 行 GeoMCP 客户端
+│   │   ├── controller/GeoCardController.java  # GeoCard CRUD + 审核
+│   │   ├── controller/OgeCredentialController.java  # OGE 凭证管理
+│   │   ├── service/GeoCardService.java    # 审核流转
+│   │   └── service/GeoExecutionService.java  # 驱动 Python 计算
+│   ├── src/main/resources/static/index.html  # 管理后台前端
+│   ├── src/main/resources/schema.sql         # H2/PostgreSQL DDL
+│   └── src/test/                  # 12 个测试全部通过
+│
+├── server.js + index.html        # Node.js 控制台
+├── services/geonode-runtime/     # FastAPI GeoNode Runtime
+├── geonexus-web/                 # Vue3 + Cesium 参考前端
+├── docs/                         # 架构设计、实施方案、协议文档
+├── manifests/                    # GeoNode/GeoSkill 清单
+├── infra/                        # Docker Compose (PostGIS/Redis/MinIO)
+├── dev.sh                        # 一键启动脚本
+└── setup.sh                      # 开发环境安装脚本
+```
+
+---
+
+## 测试
 
 ```bash
-PORT=3173 npm start
+# 一键运行全部测试
+./dev.sh test
 ```
 
-## API
+| 模块 | 测试数 | 状态 |
+|------|--------|------|
+| Python handlers (NDVI/change) | 20 | ✅ |
+| Java GeoMCPClient (WireMock) | 7 | ✅ |
+| Java GeoCardController | 3 | ✅ |
+| Java OgeCredentialController | 2 | ✅ |
+| **合计** | **32** | **全部通过** |
 
-- `GET /api/health`
-- `GET /api/registry?query=&type=&region=`
-- `GET /api/capabilities/:id`
-- `GET /api/geocards`
-- `GET /api/geocards/:id`
-- `GET /api/data-products`
-- `POST /api/data-products`
-- `POST /api/geomcp/register`
-- `POST /api/geomcp/discover`
-- `GET /api/kg?focus=`
-- `GET /api/nodes`
-- `GET /api/tasks`
-- `GET /api/tasks/:id`
-- `POST /api/plan`
-- `POST /api/jobs`
-- `GET /api/jobs/:id`
+---
 
-## Persistence
+## 文档
 
-GeoNexus uses a local SQLite database at `data/geonexus.db`.
+| 文档 | 说明 |
+|------|------|
+| `docs/architecture-diagrams.md` | 架构图（管算分离 / OGE 交互 / 契约职责） |
+| `docs/ruoyi-integration-protocol.md` | Java ↔ Python 通信协议 |
+| `docs/python-blackbox-plan.md` | Python 执行面黑盒化方案 |
+| `docs/implementation-plan.md` | 完整实施方案 |
+| `docs/implementation-roadmap.md` | 开发路线图 |
+| `docs/product-architecture.md` | 产品架构模型 |
 
-On first run it seeds:
-- registry capabilities
-- geo nodes
-- sample geospatial tasks
+---
 
-Jobs and events are persisted so the workflow survives server restarts.
+## License
 
-## GeoMCP + GeoCard
-
-Data products are registered as both:
-
-- `data_products` rows with GeoCard metadata
-- `GeoDataProductCapability` rows in the GeoCapability Registry
-
-This lets GeoMCP discover data products and lets the UI render them as GeoCards.
-
-Authenticated local asset registration is also available:
-
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `POST /api/assets`
-- `GET /api/assets`
-
-End-to-end smoke flow:
-
-```bash
-TOKEN=$(curl -s -X POST http://localhost:3102/api/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Local Builder","email":"builder@local.test","password":"geonexus123","org":"Local Geo Lab"}' \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
-
-curl -s -X POST http://localhost:3102/api/assets \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"assetKind":"model","title":"Local Flood Classifier Model","provider":"Local Geo Lab","nodeId":"node.mekong","region":"Southeast Asia","accessUrl":"local://models/flood-classifier:1.0","license":"private","policyId":"policy.data-sovereignty-asean","inputs":["water_extent_raster","aoi"],"outputs":["flood_probability","derived_map"],"tags":["flood","model","local"],"description":"Local model asset registered as a GeoCard."}'
-```
-
-## Files
-
-- `index.html` - frontend app
-- `styles.css` - UI system and animation styles
-- `app.js` - API-driven frontend orchestration
-- `server.js` - Node API and static file server
-- `data/registry.json` - GeoCapability Registry data layer
-- `docs/product-architecture.md` - product model and roadmap
-- `services/geonode-runtime/` - Phase 1 FastAPI GeoNode Runtime
-- `manifests/` - GeoNode and GeoSkill manifests
-- `infra/docker-compose.phase1.yml` - PostGIS, Redis, MinIO, GeoNode runtime stack
-
-## Phase 1 GeoNode Runtime
-
-Run the first standalone GeoNode:
-
-```bash
-python3 -m venv .venv-geonode
-.venv-geonode/bin/pip install -r services/geonode-runtime/requirements.txt
-.venv-geonode/bin/uvicorn app.main:app --app-dir services/geonode-runtime --reload --port 8100
-```
-
-Test:
-
-```bash
-curl http://localhost:8100/health
-curl http://localhost:8100/node/manifest
-curl http://localhost:8100/capabilities
-curl -X POST http://localhost:8100/jobs \
-  -H 'Content-Type: application/json' \
-  -d '{"skill_id":"skill.flood-impact-analysis","region":"Mekong Delta","date_range":"last_14_days"}'
-```
-
-The GeoNexus console includes a runtime page:
-
-```text
-http://localhost:3101/runtime
-```
-
-It calls the GeoNode Runtime at `http://localhost:8100` and submits a GeoJSON region to `skill.flood-impact-analysis`.
-
-The first flood workflow now uses:
-
-- `services/geonode-runtime/data/sample_flood_grid.geojson`
-- Shapely polygon intersection
-- Rasterio-generated sample flood-depth GeoTIFF
-- Rasterio-generated derived flood-map GeoTIFF with tiled/overview COG-style layout
-- Local STAC endpoints: `/stac` and `/stac/items/mekong-flood-depth-sample`
-- depth-weighted population and crop exposure statistics
-- local artifact fallback plus optional PostGIS/MinIO persistence
-- shared workflow runner with local worker fallback, ready for Temporal binding
-
-Workflow modules:
-
-- `services/geonode-runtime/app/job_workflow.py` - reusable flood workflow logic
-- `services/geonode-runtime/app/local_worker.py` - current local execution fallback
-- `services/geonode-runtime/app/temporal_worker.py` - Temporal worker entrypoint placeholder
-
-Workflow mode is controlled by environment variables:
-
-- `WORKFLOW_ENGINE=local` uses the embedded local worker fallback
-- `WORKFLOW_ENGINE=temporal` schedules jobs on Temporal
-- `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, and `TEMPORAL_TASK_QUEUE` configure Temporal connectivity
-
-Raster assets:
-
-- Source flood depth: `/assets/rasters/mekong_flood_depth_sample.tif`
-- Derived flood map: `/assets/cogs/mekong_flood_map_derived_cog.tif`
-- COG validation: `/assets/cogs/mekong_flood_map_derived_cog.tif/validate`
-
-Validate COG metadata and HTTP range reads:
-
-```bash
-curl http://localhost:8100/assets/cogs/mekong_flood_map_derived_cog.tif/validate
-curl -H 'Range: bytes=0-99' http://localhost:8100/assets/cogs/mekong_flood_map_derived_cog.tif -o /tmp/mekong-range.bin -i
-```
-
-Optional persistence environment variables:
-
-```bash
-export POSTGIS_DSN=postgresql://geonexus:geonexus@localhost:5433/geonexus
-export MINIO_ENDPOINT=localhost:9000
-export MINIO_ACCESS_KEY=geonexus
-export MINIO_SECRET_KEY=geonexus123
-export MINIO_BUCKET=geonexus-artifacts
-```
-
-Run cloud-native infrastructure:
-
-```bash
-docker compose -f infra/docker-compose.phase1-core.yml up --build -d
-```
-
-Run full infrastructure with MinIO when Docker Hub access is available:
-
-```bash
-docker compose -f infra/docker-compose.phase1.yml up --build
-```
-
-Run core infrastructure with Temporal profile when `temporalio/auto-setup` is available:
-
-```bash
-docker compose -f infra/docker-compose.phase1-core.yml --profile temporal up --build -d
-```
+Apache 2.0
