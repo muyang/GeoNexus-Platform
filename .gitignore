@@ -17,3 +17,21 @@ env/
 .env
 .env.local
 tmp/
+
+# Virtual environments (must be excluded)
+**/.venv/
+**/venv/
+**/.venv*/
+*.dylib
+*.so
+# Build artifacts
+**/target/
+**/output/
+# Large docs
+*.pdf
+*.pptx
+*.docx
+*.zip
+*.xlsx
+# DB files
+*.db
