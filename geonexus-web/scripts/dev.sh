@@ -34,10 +34,10 @@ if [[ "$NEED_VENV" == "1" ]]; then
   .venv/bin/pip install --upgrade pip >/dev/null
 fi
 
-# --- Install the SDK: prefer the sibling mvp checkout (dev), else PyPI ---- #
-if [[ -d ../mvp && -f ../mvp/pyproject.toml ]]; then
-  echo "==> Installing SDK from sibling checkout (../mvp, dev mode)"
-  .venv/bin/pip install -e "../mvp[mcp]" >/dev/null
+# --- Install the SDK: prefer the sibling core checkout (dev), else PyPI ---- #
+if [[ -d ../core && -f ../core/pyproject.toml ]]; then
+  echo "==> Installing SDK from sibling checkout (../core, dev mode)"
+  .venv/bin/pip install -e "../core[mcp]" >/dev/null
   .venv/bin/pip install -r requirements.txt >/dev/null
 else
   echo "==> Installing SDK from PyPI"

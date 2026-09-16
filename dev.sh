@@ -30,7 +30,7 @@ echo "========================================"
 start_python() {
     echo ""
     echo ">>> 启动 Python 执行面 (:8787) ..."
-    PYTHONPATH="$ROOT/geonexus-execution-plane/src:$ROOT/mvp/src" \
+    PYTHONPATH="$ROOT/geonexus-execution-plane/src:$ROOT/core/src" \
       $PYTHON_VENV/bin/python - << 'PYEOF' &
 from geonexus.geonode import GeoNode
 from geonexus_execution_plane.skills import BUILTIN_SKILLS
@@ -76,7 +76,7 @@ run_tests() {
     echo ""
     echo ">>> Python 测试 ..."
     cd "$ROOT/geonexus-execution-plane"
-    PYTHONPATH="src:$ROOT/mvp/src" $PYTHON_VENV/bin/python -m pytest tests/ -q 2>&1 | tail -2
+    PYTHONPATH="src:$ROOT/core/src" $PYTHON_VENV/bin/python -m pytest tests/ -q 2>&1 | tail -2
 
     echo ""
     echo ">>> Java 测试 ..."

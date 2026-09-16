@@ -104,7 +104,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 "$VENV_DIR/bin/pip" install -q --upgrade pip
-"$VENV_DIR/bin/pip" install -q -e "$ROOT/mvp/"
+"$VENV_DIR/bin/pip" install -q -e "$ROOT/core/"
 echo "[OK] geonexus-sdk installed (editable)"
 
 # 安装 geonexus-execution-plane 额外依赖

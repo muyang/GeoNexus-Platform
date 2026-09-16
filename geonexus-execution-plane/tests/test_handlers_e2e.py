@@ -12,7 +12,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import rasterio
-
 from geonexus.geomcp import GeoMCPClient, GeoMCPClientError
 from geonexus.geonode import GeoNode
 from geonexus.geonode.skill import SkillContext

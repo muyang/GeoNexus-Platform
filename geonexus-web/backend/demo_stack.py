@@ -44,7 +44,7 @@ from geonexus.web import WebConfig, JWTConfig, create_web_app
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES_DIR = REPO_ROOT.parent / "mvp" / "examples"
+EXAMPLES_DIR = REPO_ROOT.parent / "core" / "examples"
 
 NODE_KEY = "demo-node-key"
 WEB_SECRET = "demo-web-secret-0123456789abcdefghij"

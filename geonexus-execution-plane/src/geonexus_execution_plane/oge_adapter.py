@@ -7,7 +7,6 @@ Java 团队不需要关心 OGE 协议细节，只需通过 GeoMCP 调用。
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from geonexus.adapters.oge_credential import OgeCredential
 from geonexus.adapters.oge_skill import OgeSkillAdapter, discover_oge_skills

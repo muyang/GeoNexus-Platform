@@ -9,10 +9,9 @@ from __future__ import annotations
 import logging
 import os
 import signal
-import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +127,7 @@ class ExecutionPlane:
 
     def _start_geonode(self, registry_url: str) -> None:
         """启动 GeoNode（含 GeoMCP Server + Skills + OGE Adapter）。"""
-        from geonexus.geonode import GeoNode, Skill  # noqa: PLC0415
+        from geonexus.geonode import GeoNode  # noqa: PLC0415
 
         self._node = GeoNode(
             name=self._node_name,
@@ -180,7 +179,7 @@ class ExecutionPlane:
 
     def _start_web_bff(self, registry_url: str) -> None:
         """启动 Web BFF（JWT + SSE + 异步任务）。"""
-        from geonexus.web import WebConfig, JWTConfig, create_web_app  # noqa: PLC0415
+        from geonexus.web import JWTConfig, WebConfig, create_web_app  # noqa: PLC0415
 
         jwt_secret = os.environ.get("GEONEXUS_JWT_SECRET", "development-secret-change-in-production")
         config = WebConfig(

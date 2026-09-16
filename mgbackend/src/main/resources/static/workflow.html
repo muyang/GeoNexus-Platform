@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoNexus Workflow Orchestrator</title>
+<style>
+:root{--bg:#1a1a2e;--card:#16213e;--accent:#0f3460;--node:#e94560;--edge:#533483;--text:#eee;--muted:#999}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh}
+/* Sidebar */
+aside{width:240px;background:var(--card);padding:16px;display:flex;flex-direction:column;gap:8px;border-right:1px solid #333}
+aside h2{font-size:14px;margin-bottom:8px}
+.skill-item{padding:10px 12px;background:var(--accent);border-radius:6px;cursor:grab;font-size:13px;transition:.2s}
+.skill-item:hover{background:#1a5276}
+.btn{padding:8px 16px;background:var(--node);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;margin-top:auto}
+/* Canvas */
+main{flex:1;position:relative;overflow:hidden}
+canvas{display:block}
+/* Node styles */
+.workflow-node{padding:10px 14px;background:var(--card);border:2px solid var(--node);border-radius:8px;font-size:13px;min-width:120px;text-align:center}
+.workflow-node.active{border-color:#4ade80}
+.connector{width:10px;height:10px;background:var(--node);border-radius:50%;position:absolute;bottom:-5px;left:50%;transform:translateX(-50%)}
+/* Result */
+#result{position:absolute;bottom:0;left:0;right:0;background:var(--card);padding:12px;font-family:monospace;font-size:12px;max-height:150px;overflow:auto;border-top:1px solid #333}
+</style>
+</head>
+<body>
+<aside>
+  <h2>⚡ GeoSkills</h2>
+  <div class="skill-item" draggable="true" data-skill="ndvi-analysis">🌿 NDVI Analysis</div>
+  <div class="skill-item" draggable="true" data-skill="ndwi-analysis">💧 NDWI Water</div>
+  <div class="skill-item" draggable="true" data-skill="ndvi-change">📊 Change Detection</div>
+  <div class="skill-item" draggable="true" data-skill="evi-analysis">🌱 EVI Index</div>
+  <div class="skill-item" draggable="true" data-skill="ndbi-analysis">🏗️ NDBI Urban</div>
+  <div class="skill-item" draggable="true" data-skill="reproject">🗺️ Reproject</div>
+  <div class="skill-item" draggable="true" data-skill="clip-crop">✂️ Clip/Crop</div>
+  <div class="skill-item" draggable="true" data-skill="zonal-stats">📈 Zonal Stats</div>
+  <button class="btn" onclick="executeWorkflow()">▶ Execute</button>
+</aside>
+<main>
+  <canvas id="canvas"></canvas>
+  <div id="result">Drop skills onto the canvas to build a pipeline. Click Execute to run.</div>
+</main>
+
+<script>
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
+canvas.width=window.innerWidth-240;canvas.height=window.innerHeight;
+let nodes=[],edges=[],dragging=null,offsetX=0,offsetY=0;
+
+class WorkflowNode{
+  constructor(x,y,skill){this.x=x;this.y=y;this.skill=skill;this.id='node_'+Date.now()+Math.random()}
+  draw(ctx){
+    ctx.fillStyle='#16213e';ctx.strokeStyle='#e94560';ctx.lineWidth=2;
+    const w=140,h=36;
+    ctx.fillRect(this.x-w/2,this.y-h/2,w,h);
+    ctx.strokeRect(this.x-w/2,this.y-h/2,w,h);
+    ctx.fillStyle='#eee';ctx.font='13px system-ui';ctx.textAlign='center';
+    ctx.fillText(this.skill.replace(/-/g,' '),this.x,this.y+5);
+    ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(this.x,this.y+h/2,5,0,Math.PI*2);ctx.fill();
+  }
+  contains(mx,my){return Math.abs(mx-this.x)<70&&Math.abs(my-this.y)<18}
+}
+
+canvas.addEventListener('dragover',e=>e.preventDefault());
+canvas.addEventListener('drop',e=>{
+  e.preventDefault();
+  const skill=e.dataTransfer.getData('text/plain')||e.target.dataset?.skill;
+  if(!skill) return;
+  const rect=canvas.getBoundingClientRect();
+  nodes.push(new WorkflowNode(e.clientX-rect.left,e.clientY-rect.top,skill));
+  render();
+});
+canvas.addEventListener('mousedown',e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+  for(let n of nodes){if(n.contains(mx,my)){dragging=n;offsetX=n.x-mx;offsetY=n.y-my;return}}
+  dragging=null;
+});
+canvas.addEventListener('mousemove',e=>{
+  if(!dragging) return;
+  const rect=canvas.getBoundingClientRect();
+  dragging.x=e.clientX-rect.left+offsetX;
+  dragging.y=e.clientY-rect.top+offsetY;
+  render();
+});
+canvas.addEventListener('mouseup',()=>dragging=null);
+
+document.querySelectorAll('.skill-item').forEach(el=>{
+  el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',el.dataset.skill));
+});
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  edges.forEach(e=>{ctx.strokeStyle='#533483';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(e.from.x,e.from.y+18);ctx.lineTo(e.to.x,e.to.y-18);ctx.stroke()});
+  nodes.forEach(n=>n.draw(ctx));
+}
+
+function executeWorkflow(){
+  if(nodes.length===0) return document.getElementById('result').textContent='No skills in pipeline.';
+  edges=[];
+  for(let i=0;i<nodes.length-1;i++) edges.push({from:nodes[i],to:nodes[i+1]});
+  render();
+  const pipeline=nodes.map(n=>n.skill);
+  fetch('/mogan/geocard/execute/ndvi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({skills:pipeline})})
+    .catch(()=>{})
+    .then(()=>{
+      document.getElementById('result').innerHTML=`<strong>Pipeline:</strong> ${pipeline.join(' → ')}<br><span style="color:#4ade80">Workflow submitted. Check /events/{request_id} for progress.</span>`;
+    });
+}
+</script>
+</body>
+</html>

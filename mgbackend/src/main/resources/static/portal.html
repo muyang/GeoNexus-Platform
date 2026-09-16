@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoNexus — 用户门户</title>
+<style>
+:root{--bg:#f0f4f8;--card:#fff;--accent:#2563eb;--green:#16a34a;--red:#dc2626;--amber:#d97706;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--hover:#f1f5f9}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#fff;padding:24px 32px;display:flex;align-items:center;gap:16px}
+header h1{font-size:22px;font-weight:700}
+header span{opacity:.7;font-size:14px}
+.pipeline{display:flex;align-items:center;gap:12px;padding:16px 32px;background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto}
+.step{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;white-space:nowrap}
+.step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff}
+.step-1 .step-num{background:var(--accent)}
+.step-2 .step-num{background:var(--amber)}
+.step-3 .step-num{background:var(--green)}
+.step-arrow{color:var(--muted);font-size:18px}
+main{padding:24px 32px;max-width:1200px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.search-box{display:flex;gap:12px;align-items:center}
+input,button{padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-size:14px}
+input{flex:1;background:var(--bg)}
+input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+button{background:var(--accent);color:#fff;border:none;font-weight:600;cursor:pointer;transition:opacity .2s}
+button:hover{opacity:.85}
+.results-list{display:grid;gap:8px;margin-top:12px}
+.result-item{background:var(--hover);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:all .2s}
+.result-item:hover{border-color:var(--accent);background:#eff6ff}
+.result-item.selected{border-color:var(--green);background:#f0fdf4}
+.result-meta{font-size:13px;color:var(--muted)}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-ok{background:#dcfce7;color:var(--green)}
+.badge-warn{background:#fef3c7;color:var(--amber)}
+.badge-err{background:#fee2e2;color:var(--red)}
+.empty{text-align:center;padding:40px;color:var(--muted);font-size:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.param-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.param-row label{font-size:13px;font-weight:600;min-width:60px}
+.param-row input{flex:1;padding:6px 10px;font-size:13px}
+.result-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:monospace;font-size:12px;max-height:200px;overflow:auto;white-space:pre-wrap}
+.timeline{position:relative;padding-left:24px;margin:12px 0}
+.timeline-step{position:relative;padding:8px 0;border-left:2px solid var(--border);padding-left:16px;margin-bottom:8px}
+.timeline-step::before{content:'';position:absolute;left:-6px;top:12px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+.timeline-step.done::before{background:var(--green)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌍 GeoNexus</h1>
+  <span>| 联邦地理空间智能网络 — 用户门户</span>
+</header>
+
+<div class="pipeline">
+  <div class="step step-1"><span class="step-num">1</span> 语义搜索</div>
+  <span class="step-arrow">→</span>
+  <div class="step step-2"><span class="step-num">2</span> 合约绑定</div>
+  <span class="step-arrow">→</span>
+  <div class="step step-3"><span class="step-num">3</span> 执行计算</div>
+  <span class="step-arrow">→</span>
+  <span style="font-size:13px;color:var(--muted)">结果</span>
+</div>
+
+<main>
+  <!-- Step 1: Semantic Search -->
+  <div class="card" id="step1">
+    <h2>🔍 第一步：描述你的分析需求</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Data Agent 会通过 GAAG 注册中心 语义检索匹配的地理数据合约
+    </p>
+    <div class="search-box">
+      <input id="intent" placeholder="例如：mekong flood water extent、punjab crop health..." value="mekong flood water extent">
+      <button onclick="discover()">搜索</button>
+    </div>
+    <div id="discover-results" class="empty">输入分析意图后点击搜索，查看匹配的数据合约</div>
+  </div>
+
+  <!-- Step 2: Contract Binding -->
+  <div class="card hidden" id="step2">
+    <h2>📋 第二步：合约绑定与验证</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      ContractGate 双验证：语义相似度 + 空间/时间/波段合约一致性
+    </p>
+    <div class="grid2">
+      <div>
+        <div class="param-row"><label>空间范围</label><input id="bbox" value="-5, -2, 5, 2" placeholder="west,south,east,north"></div>
+        <div class="param-row"><label>CRS</label><input id="crs" value="EPSG:4326"></div>
+        <button onclick="bind()">验证绑定</button>
+      </div>
+      <div id="bind-result" class="result-box">等待绑定...</div>
+    </div>
+  </div>
+
+  <!-- Step 3: Execute -->
+  <div class="card hidden" id="step3">
+    <h2>⚡ 第三步：执行分析 & 结果</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Code Agent 在本地节点执行计算（数据不出域），返回聚合结果
+    </p>
+    <div id="exec-timeline" class="timeline">
+      <div class="timeline-step done">Data Agent 发现合约</div>
+      <div class="timeline-step done">合约门控验证通过</div>
+      <div class="timeline-step">计算决策：本地执行（数据本地性优先）</div>
+      <div class="timeline-step">等待触发分析...</div>
+    </div>
+    <div id="exec-result" class="result-box">等待执行...</div>
+  </div>
+</main>
+
+<script>
+const API='';
+
+async function discover(){
+  const intent=document.getElementById('intent').value;
+  if(!intent) return;
+  document.getElementById('discover-results').innerHTML='<div class="empty">搜索中...</div>';
+  
+  const r=await fetch(API+'/mogan/agent/discover',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({intent,k:3})
+  }).then(r=>r.json());
+  
+  if(r.error){document.getElementById('discover-results').innerHTML=`<div class="empty">错误: ${r.error}</div>`;return;}
+  
+  document.getElementById('discover-results').innerHTML=`
+    <div style="font-size:13px;color:var(--muted);margin-bottom:8px">找到 ${r.count} 个匹配合约</div>
+    <div class="results-list">
+      ${r.contracts.map(c=>`<div class="result-item" onclick="selectContract('${c.contract_id}')">
+        <div><strong>${c.contract_id}</strong><br><span class="result-meta">${c.card?.description||''}</span></div>
+        <span class="badge badge-ok">${c.asset_type}</span>
+      </div>`).join('')}
+    </div>
+    <div style="margin-top:12px">
+      <span class="badge badge-warn">点击合约卡片选择，进入第二步</span>
+    </div>`;
+  
+  document.getElementById('step2').classList.remove('hidden');
+  document.getElementById('step3').classList.remove('hidden');
+}
+
+let selectedContract='';
+function selectContract(id){
+  selectedContract=id;
+  document.querySelectorAll('.result-item').forEach(el=>el.classList.remove('selected'));
+  event.target.closest('.result-item').classList.add('selected');
+  document.getElementById('bind-result').textContent=`已选择: ${id}\n点击"验证绑定"按钮...`;
+  document.getElementById('step3').scrollIntoView({behavior:'smooth'});
+}
+
+async function bind(){
+  const intent=document.getElementById('intent').value;
+  const bbox=document.getElementById('bbox').value.split(',').map(Number);
+  const crs=document.getElementById('crs').value;
+  
+  document.getElementById('bind-result').textContent='验证中...';
+  const r=await fetch(API+'/mogan/agent/bind',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({intent,spatial:{bbox,crs}})
+  }).then(r=>r.json());
+  
+  const icon=r.gate_passed?'✅':'❌';
+  const decision=r.compute_decision==='local'?'🟢 本地计算':'🟡 计算下推';
+  document.getElementById('bind-result').innerHTML=`
+${icon} 合约门控: <strong>${r.gate_passed?'通过':'未通过'}</strong>
+📦 绑定合约: <code>${r.bound_contract||'无'}</code>
+${r.gate_passed?decision:''}
+💡 ${r.explanation||''}`;
+  
+  document.getElementById('exec-timeline').innerHTML=`
+    <div class="timeline-step done">Data Agent 发现候选合约</div>
+    <div class="timeline-step ${r.gate_passed?'done':''}">合约门控验证${r.gate_passed?'通过':'未通过'}</div>
+    <div class="timeline-step done">计算决策: ${r.compute_decision||'待定'}</div>
+    <div class="timeline-step">✅ 流程完成 — 可连接 Code Agent 执行计算</div>`;
+  
+  if(r.gate_passed){
+    document.getElementById('exec-result').innerHTML=`<pre style="font-size:12px">合约绑定成功。\n合约: ${r.bound_contract}\n决策: ${r.compute_decision}\n执行方式: 数据在 Worker 本地计算，原始数据零下载</pre>`;
+  }
+}
+</script>
+</body>
+</html>

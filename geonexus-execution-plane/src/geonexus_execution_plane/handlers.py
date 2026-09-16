@@ -9,15 +9,12 @@ Java 团队不需要关心这些实现细节，它们通过 GeoMCP 的 geo.execu
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import rasterio
-from rasterio.profiles import DefaultGTiffProfile
-
 from geonexus.geonode.skill import SkillContext
 
 logger = logging.getLogger("geonexus.execution_plane.handlers")
