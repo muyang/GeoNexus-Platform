@@ -137,6 +137,12 @@ run_tests() {
     PYTHONPATH="src" $PYTHON_BIN -m pytest tests/ -q 2>&1 | tail -2
 
     echo ""
+    echo ">>> 门户前端静态检查 ..."
+    # 门户是手写 JS 且没有别的测试：查未定义函数、悬空 DOM id、语法、
+    # 静态资源是否都在。它抓到过真问题（apiGetAuth 被调用但从未定义）。
+    node "$ROOT/scripts/check_portal.mjs" || exit 1
+
+    echo ""
     echo ">>> Java 测试 ..."
     cd "$ROOT/mgbackend"
     mvn test \

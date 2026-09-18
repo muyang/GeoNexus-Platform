@@ -622,3 +622,130 @@ body[data-route-mode="detail"] .route-overview { display: none; }
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   }
 }
+
+/* ==========================================================================
+   GeoKG 地理知识图谱（门户原生页，浅色）
+   ==========================================================================
+   复用门户的卡片与按钮样式（.graph-card / .graph-stage / .button / .mini-pill），
+   这里只补数据标记（节点/边/标签）与三块布局。配色全部取自门户变量，所以它
+   看起来就是门户的一部分，而不是嵌进来一个别的网站。
+   -------------------------------------------------------------------------- */
+.geokg-note { margin: 10px 0 18px; }
+.geokg-note code {
+  padding: 1px 5px; border-radius: 6px; background: var(--surface-soft);
+  color: var(--cyan-strong); font-size: 12px;
+}
+.geokg-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.geokg-badges .mini-pill { margin-bottom: 0; }
+
+.geokg-offline {
+  margin: 0 0 16px; padding: 14px 18px; border-radius: 26px;
+  border: 1px solid #fecaca; background: #fef2f2; color: #7f1d1d;
+}
+.geokg-offline p { margin: 6px 0 10px; color: #b91c1c; }
+.geokg-offline pre {
+  margin: 0; padding: 10px 12px; border-radius: 14px; overflow-x: auto;
+  background: rgba(255, 255, 255, 0.8); border: 1px solid #fecaca;
+}
+.geokg-offline code { color: #7f1d1d; font-size: 12px; }
+
+.geokg-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-bottom: 16px; padding: 12px 16px; border-radius: 26px;
+  border: 1px solid var(--line); background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+.geokg-toolbar label {
+  color: var(--cyan-strong); font-size: 11px; font-weight: 900;
+  text-transform: uppercase; letter-spacing: 0.1em;
+}
+.geokg-toolbar input[type='search'] {
+  flex: 1 1 240px; min-width: 180px; min-height: 42px; padding: 0 12px;
+}
+.geokg-toolbar select { min-height: 42px; padding: 0 10px; }
+.geokg-toolbar .button { min-height: 42px; }
+
+.geokg-layout {
+  display: grid; grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+  gap: 16px; align-items: start;
+}
+@media (max-width: 1100px) { .geokg-layout { grid-template-columns: minmax(0, 1fr); } }
+
+.geokg-side { display: grid; gap: 14px; }
+.geokg-block {
+  border: 1px solid var(--line); border-radius: 26px; background: var(--surface);
+  padding: 14px; box-shadow: var(--shadow-soft);
+}
+.geokg-block-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; margin-bottom: 10px;
+}
+.geokg-block-head strong { color: var(--text); font-size: 13px; }
+.geokg-block-head span { color: var(--soft); font-size: 11px; }
+.geokg-results { display: grid; gap: 6px; max-height: 340px; overflow: auto; }
+.geokg-types { display: grid; gap: 4px; max-height: 220px; overflow: auto; }
+.geokg-types label {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  color: var(--muted); cursor: pointer;
+}
+.geokg-types .sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 10px; }
+.geokg-types .n { margin-left: auto; color: var(--soft); font-size: 11px; }
+
+.geokg-hit {
+  padding: 8px 10px; border-radius: 14px; border: 1px solid transparent;
+  cursor: pointer; display: grid; gap: 2px;
+}
+.geokg-hit:hover { background: var(--surface-soft); border-color: var(--line); }
+.geokg-hit.active { background: var(--cyan-soft); border-color: var(--line-strong); }
+.geokg-hit .name { color: var(--text); font-weight: 700; font-size: 13px; }
+.geokg-hit .meta { color: var(--soft); font-size: 11px; }
+.geokg-hit .prov { color: var(--cyan-strong); font-size: 11px; }
+
+.geokg-main { display: grid; gap: 14px; }
+.geokg-stage { position: relative; min-height: 460px; }
+.geokg-stage svg { display: block; cursor: grab; }
+.geokg-stage svg.dragging { cursor: grabbing; }
+.geokg-stage-hint {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  margin: 0; text-align: center; color: var(--soft);
+}
+.geokg-edge { stroke: rgba(8, 145, 178, 0.22); stroke-width: 0.9; }
+.geokg-edge.hot { stroke: var(--cyan-strong); stroke-width: 1.8; }
+.geokg-node circle { stroke: #ffffff; stroke-width: 1.2; cursor: pointer; }
+.geokg-node.focus circle { stroke: var(--text); stroke-width: 2.5; }
+.geokg-node text { fill: var(--text); font-weight: 700; paint-order: stroke;
+  stroke: #ffffff; stroke-width: 3px; }
+.geokg-node.dim { opacity: 0.22; }
+.geokg-ring { fill: none; stroke: var(--line); stroke-dasharray: 4 7; }
+.geokg-legend {
+  position: absolute; left: 12px; bottom: 12px; display: grid; gap: 3px;
+  padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.94); font-size: 10px; color: var(--muted);
+  max-height: 44%; overflow: auto;
+}
+.geokg-legend span { display: flex; align-items: center; gap: 6px; }
+.geokg-legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
+.geokg-detail {
+  border: 1px solid var(--line); border-radius: 26px; background: var(--surface);
+  padding: 16px; box-shadow: var(--shadow-soft);
+}
+.geokg-detail h3 { margin: 0 0 4px; font-size: 15px; color: var(--text); }
+.geokg-detail .sub { color: var(--soft); font-size: 11px; margin-bottom: 12px; }
+.geokg-detail table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.geokg-detail td { padding: 3px 0; vertical-align: top; font-size: 12px; }
+.geokg-detail td.k { color: var(--soft); width: 108px; }
+.geokg-detail td.v { color: var(--text); word-break: break-word; font-size: 12px; }
+.geokg-detail h4 {
+  margin: 14px 0 6px; font-size: 11px; color: var(--cyan-strong);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.geokg-rel {
+  display: flex; gap: 8px; align-items: baseline; padding: 4px 6px;
+  border-radius: 10px; cursor: pointer;
+}
+.geokg-rel:hover { background: var(--surface-soft); }
+.geokg-rel .r { color: var(--cyan-strong); font-size: 10px; flex: 0 0 auto; font-weight: 900; }
+.geokg-rel .t { flex: 1; font-size: 12px; color: var(--text); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.geokg-rel .c { color: var(--soft); font-size: 10px; }

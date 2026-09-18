@@ -1332,6 +1332,70 @@ function createJob(plan) {
   return job;
 }
 
+// ── GeoKG 反向代理 ────────────────────────────────────────────────────────
+// GeoKG 是独立进程（默认 :8788），而且**没有配 CORS**，所以浏览器不能从
+// :3100 直接 fetch 它。这里做一层同源代理，前端只管调 /api/geokg/*。
+//
+// 只放行只读路径，且只放行 GET：写接口（manifest/refresh/build）需要
+// X-API-Key 并会跑子进程、覆写数据文件，它们只应该从 GeoKG 自己的端口访问，
+// 不该顺手成为门户的一个入口。白名单而不是"任意 GET"也是这个意思——门户
+// 依赖哪些接口应该一眼看得见，而不是门户变成整个管理 API 的通道。
+const GEOKG_BASE = process.env.GEOKG_URL || 'http://127.0.0.1:8788';
+const GEOKG_READ_PATHS = [
+  '/version', '/health', '/types', '/search', '/graph', '/entity/',
+];
+
+function proxyGeoKG(req, res, url) {
+  const rest = url.pathname.replace(/^\/api\/geokg/, '');
+  if (req.method !== 'GET') {
+    return send(res, 405, { error: '门户只代理 GeoKG 的只读接口（GET）' });
+  }
+  // rest 只是 pathname（不含查询串），所以匹配就是"精确相等"或"前缀"两种
+  const allowed = GEOKG_READ_PATHS.some(
+    (p) => (p.endsWith('/') ? rest.startsWith(p) : rest === p));
+  if (!allowed) {
+    return send(res, 403, {
+      error: `门户未代理该路径: ${rest}`,
+      allowed: GEOKG_READ_PATHS,
+    });
+  }
+
+  const target = new URL(`/api/v1/geokg${rest}${url.search}`, GEOKG_BASE);
+  const proxyReq = http.request(target, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    timeout: 15000,
+  }, (proxyRes) => {
+    const chunks = [];
+    proxyRes.on('data', (c) => chunks.push(c));
+    proxyRes.on('end', () => {
+      res.writeHead(proxyRes.statusCode || 502, {
+        'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      res.end(Buffer.concat(chunks));
+    });
+  });
+
+  // 典型的"忘了起 GeoKG"要能一眼看懂，而不是浏览器转圈到超时
+  proxyReq.on('error', (error) => {
+    const down = error.code === 'ECONNREFUSED' || error.code === 'EHOSTUNREACH';
+    send(res, down ? 503 : 502, {
+      error: down
+        ? `连不上 GeoKG（${GEOKG_BASE}）——它没有在运行。`
+        : `GeoKG 代理失败: ${error.message}`,
+      hint: down
+        ? '启动：cd <GeoKG 仓库> && geokg-api --port 8788（或 ./tmp/run/local-stack.sh start geokg）'
+        : undefined,
+      upstream: GEOKG_BASE,
+    });
+  });
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy(new Error('GeoKG 响应超时（15s）'));
+  });
+  proxyReq.end();
+}
+
 function serveStatic(req, res, pathname) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
   filePath = path.join(ROOT, filePath);
@@ -1727,6 +1791,11 @@ async function handleApi(req, res, url) {
 function listen(port) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    // GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
+    if (url.pathname.startsWith('/api/geokg/')) {
+      proxyGeoKG(req, res, url);
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       handleApi(req, res, url).catch((error) => {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });

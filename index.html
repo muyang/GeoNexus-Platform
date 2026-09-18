@@ -28,7 +28,11 @@
         <a href="/tasks" data-route="/tasks">Tasks</a>
         <a href="/capabilities" data-route="/capabilities">Capabilities</a>
         <a href="/data-products" data-route="/data-products">Data Products</a>
-        <a href="/graph" data-route="/graph">GeoKG</a>
+        <!-- 这一项以前叫 GeoKG，但它画的是平台自己的能力关系（node / skill /
+             policy 之间的 depends-on、wraps、presents），不是 GeoKG 那份地理
+             领域知识。两张图各自名副其实，所以改名 + 新增"地理知识"。 -->
+        <a href="/capability-graph" data-route="/capability-graph">能力图谱</a>
+        <a href="/geo-knowledge" data-route="/geo-knowledge">地理知识</a>
         <a href="/runtime" data-route="/runtime">Runtime</a>
         <a href="/admin" data-route="/admin">Admin</a>
       </nav>
@@ -274,7 +278,8 @@
             <button class="detail-tab" data-tab="capability-detail" type="button">能力详情</button>
             <button class="detail-tab" data-tab="data-products-detail" type="button">数据产品</button>
             <button class="detail-tab" data-tab="routing-detail" type="button">路由页</button>
-            <button class="detail-tab" data-tab="graph-detail" type="button">GeoKG</button>
+            <button class="detail-tab" data-tab="graph-detail" type="button">能力图谱</button>
+            <button class="detail-tab" data-tab="geokg-detail" type="button">地理知识</button>
             <button class="detail-tab" data-tab="admin-detail" type="button">后台管理</button>
             <button class="detail-tab" data-tab="postcard-detail" type="button">明信片素材</button>
             <button class="detail-tab" data-tab="runtime-detail" type="button">GeoNode Runtime</button>
@@ -403,16 +408,101 @@
             <section class="detail-panel" data-panel="graph-detail">
               <div class="section-head compact">
                 <div>
-                  <p class="eyebrow">GeoKG</p>
-                  <h2>Relationship graph</h2>
+                  <p class="eyebrow">Capability graph</p>
+                  <h2>能力关系图谱</h2>
                 </div>
               </div>
               <div class="graph-card full-graph">
                 <div class="graph-head">
-                  <span>Knowledge graph</span>
-                  <span>capability routing + governance</span>
+                  <span>平台能力图谱</span>
+                  <span>能力依赖 + 节点归属 + 政策关系</span>
                 </div>
                 <div class="graph-stage" id="kgStage"></div>
+              </div>
+              <p class="body-copy geokg-note">
+                这张图画的是<strong>平台自身</strong>的能力网络（GeoNode / GeoMCP /
+                GeoCard / GeoSkill / 政策之间的依赖）。地理领域知识（国家、SDG 指标、
+                卫星、灾害本体…）在
+                <a href="/geo-knowledge" data-route="/geo-knowledge">地理知识</a> 页。
+              </p>
+            </section>
+
+            <section class="detail-panel" data-panel="geokg-detail">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">GeoKG</p>
+                  <h2>地理领域知识图谱</h2>
+                </div>
+                <div class="geokg-badges">
+                  <span class="mini-pill" id="geokgVersion">载入中…</span>
+                </div>
+              </div>
+
+              <p class="body-copy geokg-note">
+                检索 GeoKG 的领域实体，并以它为中心展开邻域。数据来自独立的 GeoKG 服务
+                （<code id="geokgUpstream">:8788</code>），经门户
+                <code>/api/geokg/*</code> 同源代理；每条实体都带
+                <code>origin / source / source_tier / license / retrieved</code>。
+              </p>
+
+              <div class="geokg-offline" id="geokgOffline" hidden>
+                <strong>连不上 GeoKG 服务</strong>
+                <p id="geokgOfflineMsg"></p>
+                <pre><code>cd &lt;GeoKG 仓库&gt; &amp;&amp; geokg-api --port 8788</code></pre>
+              </div>
+
+              <div class="geokg-toolbar">
+                <label for="geokgQ">检索</label>
+                <input id="geokgQ" type="search" placeholder="Brazil / sentinel / 6.6.1 / flood …"
+                       autocomplete="off" spellcheck="false">
+                <button class="button primary" id="geokgGo" type="button">搜索</button>
+                <label for="geokgDepth">层数</label>
+                <select id="geokgDepth">
+                  <option value="1">1 跳</option>
+                  <option value="2" selected>2 跳</option>
+                  <option value="3">3 跳</option>
+                </select>
+                <label for="geokgDirection">方向</label>
+                <select id="geokgDirection">
+                  <option value="both" selected>双向</option>
+                  <option value="out">只出边</option>
+                  <option value="in">只入边</option>
+                </select>
+                <button class="button secondary" id="geokgReset" type="button">回到 Brazil</button>
+              </div>
+
+              <div class="geokg-layout">
+                <div class="geokg-side">
+                  <div class="geokg-block">
+                    <div class="geokg-block-head">
+                      <strong>检索结果</strong><span id="geokgCount"></span>
+                    </div>
+                    <div class="geokg-results" id="geokgResults">
+                      <p class="body-copy">载入中…</p>
+                    </div>
+                  </div>
+                  <div class="geokg-block">
+                    <div class="geokg-block-head">
+                      <strong>实体类型</strong><span>点击筛选</span>
+                    </div>
+                    <div class="geokg-types" id="geokgTypes"></div>
+                  </div>
+                </div>
+
+                <div class="geokg-main">
+                  <div class="graph-card full-graph">
+                    <div class="graph-head">
+                      <span id="geokgFocusLabel">地理知识子图</span>
+                      <span id="geokgStats"></span>
+                    </div>
+                    <div class="graph-stage geokg-stage" id="geokgStage">
+                      <p class="body-copy geokg-stage-hint" id="geokgStageHint">
+                        搜一个实体，或点左侧结果。
+                      </p>
+                    </div>
+                  </div>
+                  <div class="geokg-detail" id="geokgDetail" hidden></div>
+                </div>
               </div>
             </section>
 

@@ -110,7 +110,9 @@ curl -s -X POST http://localhost:8080/mogan/geocard/execute/ndvi \
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| 🌐 Node 门户 | http://127.0.0.1:3100/ | 联邦节点视图 / 知识图谱 / 资产 |
+| 🌐 Node 门户 | http://127.0.0.1:3100/ | 联邦节点视图 / 两张图谱 / 资产 |
+| 🧭 能力图谱 | http://127.0.0.1:3100/capability-graph | 平台自身的能力依赖图（旧路径 `/graph` 仍可用） |
+| 🌍 地理知识 | http://127.0.0.1:3100/geo-knowledge | **GeoKG 地理领域知识图谱**（检索 + 邻域 + 溯源） |
 | ☕ Java 管理端首页 | http://localhost:8080/ | GeoCard / OGE / NDVI 执行 |
 | 📋 数据治理门户 | http://localhost:8080/portal.html | 数据源与治理视图 |
 | 🔧 工作流 | http://localhost:8080/workflow.html | 流程编排视图 |
@@ -119,6 +121,29 @@ curl -s -X POST http://localhost:8080/mogan/geocard/execute/ndvi \
 | 📚 Registry | http://127.0.0.1:8790/nodes | 节点/卡片/技能视图（可选） |
 | 🔌 Web BFF | http://127.0.0.1:8900/docs | JWT + 异步任务 + SSE（可选） |
 | 📊 H2 控制台 | http://localhost:8080/h2-console | `jdbc:h2:mem:geonexus_mg`，用户 `sa`，空密码 |
+
+### 两张图谱别混淆
+
+门户里有两个图，画的**不是同一件事**：
+
+| 页面 | 画的是 | 数据来源 |
+|------|--------|----------|
+| `/capability-graph` **能力图谱** | 平台**自身**的能力网络：GeoNode / GeoMCP / GeoCard / GeoSkill / 政策之间的 `depends-on`、`wraps`、`presents` | 门户自带的 `data/geonexus.db`（`relations` 表） |
+| `/geo-knowledge` **地理知识** | GeoKG 那份**地理领域知识**：国家、SDG 指标、卫星、灾害/气候/土地覆盖本体、术语 | 独立的 GeoKG 服务（`:8788`），经门户同源代理 |
+
+> 第二个标签页以前叫 "GeoKG" 却画的是第一张图，名不副实，已改名并新增页。
+
+**地理知识页需要 GeoKG 在跑**。它没起时页面会显示一条明确的离线提示（含启动命令），
+不会白屏。门户通过 `/api/geokg/*` **反向代理**到 `:8788`——因为 GeoKG 没有配
+CORS，浏览器不能跨端口直连。代理**只放行只读 GET**，写接口（manifest / refresh /
+build）不经过门户：
+
+```bash
+# 门户侧的代理白名单（server.js）
+/version /health /types /search /graph /entity/…
+# 上游地址可覆盖
+GEOKG_URL=http://127.0.0.1:8788 node server.js
+```
 
 ### Java mgbackend API
 
@@ -196,6 +221,10 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 ## 项目结构
 
 ```
+├── server.js + index.html + app.js + styles.css   # Node 门户（:3100）
+│   └── server.js 含 /api/geokg/* → GeoKG :8788 的同源只读代理
+├── scripts/check_portal.mjs           # 门户前端静态检查（无依赖，dev.sh test 会跑）
+│
 ├── geonexus-execution-plane/          # Python 执行面（计算面）
 │   ├── src/geonexus_execution_plane/
 │   │   ├── main.py                    # ExecutionPlane：一键起 GeoMCP+Registry+Web
@@ -218,7 +247,6 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 │   ├── src/main/resources/schema.sql           # H2/PostgreSQL DDL
 │   └── src/test/                               # 12 个测试全部通过
 │
-├── server.js + index.html + app.js    # Node.js 门户（:3100）
 ├── services/geonode-runtime/          # FastAPI GeoNode Runtime（Docker）
 ├── geonexus-web/                      # Vue3 + Cesium 参考前端
 ├── docs/                              # 架构设计、实施方案、协议文档

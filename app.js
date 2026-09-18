@@ -9,6 +9,7 @@ const state = {
   animationTimers: [],
   activeTab: 'task-list',
   routeReady: false,
+  authToken: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -59,12 +60,41 @@ const refs = {
   detailTabs: () => Array.from(document.querySelectorAll('.detail-tab')),
   detailPanels: () => Array.from(document.querySelectorAll('.detail-panel')),
   productLinks: () => Array.from(document.querySelectorAll('[data-route]')),
+  geokgVersion: el('geokgVersion'),
+  geokgUpstream: el('geokgUpstream'),
+  geokgOffline: el('geokgOffline'),
+  geokgOfflineMsg: el('geokgOfflineMsg'),
+  geokgQ: el('geokgQ'),
+  geokgGo: el('geokgGo'),
+  geokgDepth: el('geokgDepth'),
+  geokgDirection: el('geokgDirection'),
+  geokgReset: el('geokgReset'),
+  geokgResults: el('geokgResults'),
+  geokgCount: el('geokgCount'),
+  geokgTypes: el('geokgTypes'),
+  geokgStage: el('geokgStage'),
+  geokgStageHint: el('geokgStageHint'),
+  geokgFocusLabel: el('geokgFocusLabel'),
+  geokgStats: el('geokgStats'),
+  geokgDetail: el('geokgDetail'),
 };
 
 refs.missionInput.value = 'Assess flood impact for the Mekong Delta for the last 14 days and estimate crop loss.';
 
 function typeLabel(type) {
   return type.replace('Geo', '').replace('Capability', '');
+}
+
+/* HTML 转义。门户原有代码直接把数据插进 innerHTML，本地数据看不出问题，但
+   GeoKG 的实体名/属性来自上游数据集（GeoNames、OSCAR、UN），属于外部输入，
+   拼进模板前必须转义。 */
+function escapeHtml(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function apiPath(path, params = {}) {
@@ -79,6 +109,24 @@ async function apiGet(path, params = {}) {
   const url = apiPath(path, params);
   refs.apiRequest.textContent = `GET ${url.pathname}${url.search}`;
   const response = await fetch(url);
+  const data = await response.json();
+  refs.apiResponse.textContent = JSON.stringify(data, null, 2);
+  if (!response.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+/* 带 Bearer token 的 GET。`loadCurrentUser()` 一直在调 `apiGetAuth`，但这个函数
+   从来没被定义过——之所以没炸，是因为它前面有 `if (!state.authToken) return`
+   提前返回，而未登录时 token 永远是空的。一旦登录后再调一次 loadCurrentUser
+   （或以后把 token 持久化到 localStorage 并允许刷新后恢复），就是
+   ReferenceError: apiGetAuth is not defined。服务端读的就是
+   `Authorization: Bearer <token>`（见 server.js 的 getAuthUser）。 */
+async function apiGetAuth(path, params = {}) {
+  const url = apiPath(path, params);
+  refs.apiRequest.textContent = `GET ${url.pathname}${url.search} (auth)`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${state.authToken}` },
+  });
   const data = await response.json();
   refs.apiResponse.textContent = JSON.stringify(data, null, 2);
   if (!response.ok) throw new Error(data.error || 'Request failed');
@@ -415,9 +463,16 @@ async function applyRoute() {
     await inspectCapability(id);
     return;
   }
-  if (pathname === '/graph') {
+  if (pathname === '/graph' || pathname === '/capability-graph') {
+    // /graph 是旧路径，保留成别名以免旧链接失效
     setRouteMode('detail');
     setActiveTab('graph-detail');
+    return;
+  }
+  if (pathname === '/geo-knowledge') {
+    setRouteMode('detail');
+    setActiveTab('geokg-detail');
+    loadGeoKG();
     return;
   }
   if (pathname === '/admin') {
@@ -1088,7 +1143,11 @@ function wireEvents() {
   if (refs.runMissionSecondary) refs.runMissionSecondary.addEventListener('click', simulateMission);
   refs.refreshBtn.addEventListener('click', refresh);
   refs.detailTabs().forEach((button) => {
-    button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+    button.addEventListener('click', () => {
+      setActiveTab(button.dataset.tab);
+      // 点标签页不改 URL，所以这里也要按需拉数据，不能只靠路由分派
+      if (button.dataset.tab === 'geokg-detail') loadGeoKG();
+    });
   });
   refs.productLinks().forEach((link) => {
     link.addEventListener('click', (event) => {
@@ -1134,6 +1193,7 @@ function wireEvents() {
   if (postmarkResetBtn) postmarkResetBtn.addEventListener('click', () => { postmarkForm.reset(); el('postmarkId').value = ''; });
 
   window.addEventListener('popstate', applyRoute);
+  geokgBindControls();
 }
 
 wireEvents();
@@ -1145,3 +1205,388 @@ Promise.all([loadCurrentUser(), loadRegistry(), loadTasks()]).then(() => {
   setStatus(false, error.message);
   refs.apiResponse.textContent = JSON.stringify({ error: error.message }, null, 2);
 });
+
+/* ==========================================================================
+   GeoKG 地理领域知识图谱（门户原生页 /geo-knowledge）
+   ==========================================================================
+   数据来自独立的 GeoKG 服务（:8788），经门户 `/api/geokg/*` 同源代理
+   （见 server.js 的 proxyGeoKG；它只放行只读 GET）。
+
+   布局算法与 GeoKG 自带的 /ui 页面同源，这里是为门户浅色视觉重写的第二份实现
+   —— 两个仓库没有共享代码的途径，所以这是**已知的重复**：改环半径或打分规则时
+   两边都要动。做法与取值（BFS 分层同心环、弧间距 34、半径随深度单调递增）在两
+   处保持一致，且都注明了原因。
+   -------------------------------------------------------------------------- */
+const GEOKG_PALETTE = [
+  '#0891b2', '#059669', '#d97706', '#db2777', '#7c3aed', '#ea580c',
+  '#0d9488', '#ca8a04', '#b45309', '#16a34a', '#2563eb', '#c2410c',
+  '#9333ea', '#15803d', '#a16207', '#64748b',
+];
+const GEOKG_RING_SPACING = 34;
+
+state.geokg = {
+  loaded: false,
+  loading: false,
+  focus: null,
+  graph: null,
+  types: [],
+  activeTypes: new Set(),
+  view: null,
+  home: null,
+};
+
+function geokgColor(type) {
+  const i = state.geokg.types.findIndex((t) => t.type === type);
+  return GEOKG_PALETTE[(i < 0 ? GEOKG_PALETTE.length - 1 : i) % GEOKG_PALETTE.length];
+}
+
+async function geokgGet(path, params = {}) {
+  const url = apiPath(`/api/geokg${path}`, params);
+  refs.apiRequest.textContent = `GET ${url.pathname}${url.search}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  refs.apiResponse.textContent = JSON.stringify(data, null, 2);
+  if (!response.ok) {
+    const error = new Error(data.error || 'GeoKG 请求失败');
+    error.payload = data;          // 保留 hint / upstream 供离线提示使用
+    throw error;
+  }
+  return data;
+}
+
+function geokgShowOffline(error) {
+  const payload = error.payload || {};
+  refs.geokgOffline.hidden = false;
+  refs.geokgOfflineMsg.textContent = [payload.error || error.message,
+                                      payload.hint].filter(Boolean).join(' ');
+  refs.geokgUpstream.textContent = payload.upstream || ':8788';
+  refs.geokgStageHint.textContent = 'GeoKG 服务未运行，图谱不可用。';
+  refs.geokgStageHint.hidden = false;
+}
+
+function geokgHideOffline() {
+  refs.geokgOffline.hidden = true;
+}
+
+async function loadGeoKG(force = false) {
+  if (state.geokg.loading) return;
+  if (state.geokg.loaded && !force) {
+    if (state.geokg.graph) renderGeoKG();
+    return;
+  }
+  state.geokg.loading = true;
+  try {
+    const version = await geokgGet('/version');
+    refs.geokgVersion.textContent =
+      `${version.dataset_version} · ${version.fingerprint.slice(0, 10)} · ${version.rows.toLocaleString()} 行`;
+    const types = await geokgGet('/types');
+    state.geokg.types = types.types;
+    refs.geokgUpstream.textContent = `:8788 · ${types.dataset.entities.toLocaleString()} 实体 / ${types.dataset.relations.toLocaleString()} 关系`;
+    geokgRenderTypes();
+    geokgHideOffline();
+    state.geokg.loaded = true;
+    await geokgSearch('Brazil');
+    await geokgExpand('country.BRA');
+  } catch (error) {
+    geokgShowOffline(error);
+  } finally {
+    state.geokg.loading = false;
+  }
+}
+
+function geokgRenderTypes() {
+  refs.geokgTypes.innerHTML = state.geokg.types.map((t) =>
+    `<label><input type="checkbox" data-type="${escapeHtml(t.type)}" checked>` +
+    `<span class="sw" style="background:${geokgColor(t.type)}"></span>` +
+    `<span>${escapeHtml(t.type)}</span>` +
+    `<span class="n">${t.entities.toLocaleString()}</span></label>`).join('');
+  state.geokg.activeTypes = new Set(state.geokg.types.map((t) => t.type));
+  refs.geokgTypes.querySelectorAll('input').forEach((box) => {
+    box.addEventListener('change', () => {
+      if (box.checked) state.geokg.activeTypes.add(box.dataset.type);
+      else state.geokg.activeTypes.delete(box.dataset.type);
+      if (state.geokg.focus) geokgExpand(state.geokg.focus);
+    });
+  });
+}
+
+function geokgFilterParams() {
+  const all = state.geokg.types.length;
+  const picked = state.geokg.activeTypes;
+  return picked.size && picked.size < all ? { type: [...picked] } : {};
+}
+
+async function geokgSearch(query) {
+  const q = query === undefined ? refs.geokgQ.value.trim() : query;
+  if (query !== undefined) refs.geokgQ.value = query;
+  refs.geokgResults.innerHTML = '<p class="body-copy">检索中…</p>';
+  try {
+    const data = await geokgGet('/search', { q, limit: 40, ...geokgFilterParams() });
+    refs.geokgCount.textContent =
+      `${data.count}${data.truncated ? `（显示前 ${data.returned}）` : ''}`;
+    if (!data.results.length) {
+      refs.geokgResults.innerHTML =
+        '<p class="body-copy">没有命中。换个更短的关键词，或取消类型筛选。</p>';
+      return;
+    }
+    refs.geokgResults.innerHTML = data.results.map((hit) => {
+      const p = hit.provenance || {};
+      const prov = [p.source, p.source_tier].filter(Boolean).join(' · ');
+      return `<div class="geokg-hit" data-id="${escapeHtml(hit.id)}">
+        <span class="name">${escapeHtml(hit.name)}</span>
+        <span class="meta">${escapeHtml(hit.type)} · ${escapeHtml(hit.id)}</span>
+        ${prov ? `<span class="prov">${escapeHtml(prov)}</span>` : ''}
+      </div>`;
+    }).join('');
+    refs.geokgResults.querySelectorAll('.geokg-hit').forEach((node) => {
+      node.addEventListener('click', () => {
+        refs.geokgResults.querySelectorAll('.geokg-hit')
+          .forEach((x) => x.classList.remove('active'));
+        node.classList.add('active');
+        geokgDetail(node.dataset.id);
+        geokgExpand(node.dataset.id);
+      });
+    });
+  } catch (error) {
+    refs.geokgResults.innerHTML = `<p class="body-copy">${escapeHtml(error.message)}</p>`;
+    if (error.payload) geokgShowOffline(error);
+  }
+}
+
+async function geokgExpand(focusId) {
+  try {
+    const graph = await geokgGet('/graph', {
+      focus: focusId,
+      depth: refs.geokgDepth.value,
+      direction: refs.geokgDirection.value,
+      limit: 400,
+      ...geokgFilterParams(),
+    });
+    state.geokg.graph = graph;
+    state.geokg.focus = focusId;
+    geokgHideOffline();
+    renderGeoKG();
+  } catch (error) {
+    if (error.payload) geokgShowOffline(error);
+    refs.geokgStats.textContent = error.message;
+  }
+}
+
+/* 与 GeoKG 页同一套规则：环半径随该环节点数增长，且随深度单调递增 */
+function geokgLayout(nodes) {
+  const W = 1000;
+  const cx = W / 2;
+  const cy = W / 2;
+  const byDepth = new Map();
+  nodes.forEach((n) => {
+    if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
+    byDepth.get(n.depth).push(n);
+  });
+  const pos = new Map();
+  const radii = [];
+  let prevR = 0;
+  let maxR = 0;
+  [...byDepth.keys()].sort((a, b) => a - b).forEach((depth) => {
+    const group = byDepth.get(depth);
+    if (depth === 0) {
+      pos.set(group[0].id, { x: cx, y: cy });
+      return;
+    }
+    group.sort((a, b) => (a.type + a.id).localeCompare(b.type + b.id));
+    const needed = (group.length * GEOKG_RING_SPACING) / (2 * Math.PI);
+    const r = Math.max(90 * depth, needed, prevR + 90);
+    prevR = r;
+    maxR = Math.max(maxR, r);
+    radii.push({ depth, r });
+    group.forEach((node, i) => {
+      const angle = (i / group.length) * Math.PI * 2 - Math.PI / 2;
+      pos.set(node.id, { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+    });
+  });
+  return { pos, cx, cy, radii, maxR };
+}
+
+function geokgApplyView() {
+  const svg = refs.geokgStage.querySelector('svg');
+  if (svg && state.geokg.view) {
+    const v = state.geokg.view;
+    svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+  }
+}
+
+function renderGeoKG() {
+  const graph = state.geokg.graph;
+  if (!graph || !graph.nodes.length) return;
+  const { pos, cx, cy, radii, maxR } = geokgLayout(graph.nodes);
+  const pad = 120;
+  const half = maxR + pad;
+  state.geokg.home = { x: cx - half, y: cy - half, w: half * 2, h: half * 2 };
+  state.geokg.view = { ...state.geokg.home };
+
+  const degree = new Map();
+  graph.edges.forEach((e) => {
+    degree.set(e.source, (degree.get(e.source) || 0) + 1);
+    degree.set(e.target, (degree.get(e.target) || 0) + 1);
+  });
+  const parts = [];
+  radii.forEach((ring) => {
+    parts.push(`<circle class="geokg-ring" cx="${cx}" cy="${cy}" r="${ring.r}"></circle>`);
+  });
+  const showEdgeLabel = graph.edges.length <= 45;
+  graph.edges.forEach((e) => {
+    const a = pos.get(e.source);
+    const b = pos.get(e.target);
+    if (!a || !b) return;
+    parts.push(`<line class="geokg-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}">` +
+               `<title>${escapeHtml(e.source)} —${escapeHtml(e.relation)}→ ${escapeHtml(e.target)}</title></line>`);
+    if (showEdgeLabel) {
+      parts.push(`<text x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2}" fill="#64748b" ` +
+                 `font-size="11" text-anchor="middle">${escapeHtml(e.relation)}</text>`);
+    }
+  });
+  const showLabels = graph.nodes.length <= 60;
+  graph.nodes.slice()
+    .sort((a, b) => (a.id === graph.focus) - (b.id === graph.focus))
+    .forEach((n) => {
+      const p = pos.get(n.id);
+      if (!p) return;
+      const deg = degree.get(n.id) || 0;
+      const r = n.id === graph.focus ? 13 : Math.max(5, Math.min(12, 4 + deg * 0.4));
+      parts.push(
+        `<g class="geokg-node${n.id === graph.focus ? ' focus' : ''}" data-id="${escapeHtml(n.id)}">` +
+        `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${geokgColor(n.type)}">` +
+        `<title>${escapeHtml(n.name)} · ${escapeHtml(n.type)} · 深度 ${n.depth} · 度数 ${deg}</title>` +
+        `</circle>` +
+        (showLabels || n.id === graph.focus
+          ? `<text x="${p.x}" y="${p.y - r - 5}" font-size="13" text-anchor="middle">${escapeHtml(n.name)}</text>`
+          : '') +
+        `</g>`);
+    });
+
+  refs.geokgStageHint.hidden = true;
+  refs.geokgStage.innerHTML =
+    `<svg viewBox="${state.geokg.view.x} ${state.geokg.view.y} ${state.geokg.view.w} ${state.geokg.view.h}" ` +
+    `style="width:100%;height:100%;min-height:460px">${parts.join('')}</svg>` +
+    `<div class="geokg-legend">${[...new Set(graph.nodes.map((n) => n.type))].sort()
+      .map((t) => `<span><i style="background:${geokgColor(t)}"></i>${escapeHtml(t)} ` +
+                  `${graph.by_type[t] || 0}</span>`).join('')}</div>`;
+
+  refs.geokgFocusLabel.textContent = graph.focus;
+  refs.geokgStats.textContent =
+    `${graph.nodes.length} 节点 / ${graph.edges.length} 边 · ${graph.max_depth} 层` +
+    (graph.truncated ? ` · 已按上限 ${graph.limit} 截断` : '');
+
+  const svg = refs.geokgStage.querySelector('svg');
+  svg.querySelectorAll('.geokg-node').forEach((node) => {
+    node.addEventListener('click', (event) => {
+      event.stopPropagation();
+      geokgDetail(node.dataset.id);
+      if (node.dataset.id !== state.geokg.focus) geokgExpand(node.dataset.id);
+    });
+    node.addEventListener('mouseenter', () => {
+      const id = node.dataset.id;
+      svg.querySelectorAll('.geokg-node').forEach((other) => {
+        if (other.dataset.id === id) return;
+        const linked = graph.edges.some((e) =>
+          (e.source === id && e.target === other.dataset.id) ||
+          (e.target === id && e.source === other.dataset.id));
+        other.classList.toggle('dim', !linked);
+      });
+    });
+    node.addEventListener('mouseleave', () => {
+      svg.querySelectorAll('.geokg-node').forEach((o) => o.classList.remove('dim'));
+    });
+  });
+  geokgBindPanZoom(svg);
+}
+
+function geokgBindPanZoom(svg) {
+  svg.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const v = state.geokg.view;
+    const mx = v.x + ((event.clientX - rect.left) / rect.width) * v.w;
+    const my = v.y + ((event.clientY - rect.top) / rect.height) * v.h;
+    const k = event.deltaY > 0 ? 1.12 : 1 / 1.12;
+    v.w *= k;
+    v.h *= k;
+    v.x = mx - (mx - v.x) * k;
+    v.y = my - (my - v.y) * k;
+    geokgApplyView();
+  }, { passive: false });
+
+  let drag = null;
+  svg.addEventListener('mousedown', (event) => {
+    if (event.target.closest('.geokg-node')) return;
+    drag = { x: event.clientX, y: event.clientY, vx: state.geokg.view.x, vy: state.geokg.view.y };
+    svg.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', (event) => {
+    if (!drag) return;
+    const rect = svg.getBoundingClientRect();
+    state.geokg.view.x = drag.vx - ((event.clientX - drag.x) / rect.width) * state.geokg.view.w;
+    state.geokg.view.y = drag.vy - ((event.clientY - drag.y) / rect.height) * state.geokg.view.h;
+    geokgApplyView();
+  });
+  window.addEventListener('mouseup', () => {
+    drag = null;
+    svg.classList.remove('dragging');
+  });
+}
+
+async function geokgDetail(entityId) {
+  const box = refs.geokgDetail;
+  box.hidden = false;
+  box.innerHTML = '<p class="body-copy">载入中…</p>';
+  try {
+    const data = await geokgGet(`/entity/${encodeURIComponent(entityId)}`);
+    const e = data.entity;
+    const props = e.properties || {};
+    const keys = ['name', 'title', 'indicator_title', 'acronym', 'status', 'level',
+                  'theme', 'iso3', 'code', 'region', 'space_agency'];
+    const rows = (obj, list) => list
+      .filter((k) => obj[k] !== undefined && obj[k] !== '')
+      .map((k) => `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${escapeHtml(obj[k])}</td></tr>`)
+      .join('');
+    const rel = (list, arrow) => (list.length ? list.map((x) =>
+      `<div class="geokg-rel" data-id="${escapeHtml(x.entity.id)}">` +
+      `<span class="r">${arrow} ${escapeHtml(x.relation)}</span>` +
+      `<span class="t">${escapeHtml(x.entity.name)}</span>` +
+      `<span class="c">${escapeHtml(x.entity.type)}</span></div>`).join('')
+      : '<p class="body-copy">（无）</p>');
+    box.innerHTML = `
+      <h3>${escapeHtml(e.name)}</h3>
+      <p class="sub">${escapeHtml(e.type)} · ${escapeHtml(e.id)}</p>
+      <table>${rows(props, keys)}</table>
+      <h4>溯源（GeoKG 强制字段）</h4>
+      <table>${rows(e.provenance || {}, ['origin', 'source', 'source_tier', 'license',
+                                         'retrieved', 'attribution'])}</table>
+      <h4>指向它（入边 ${data.in.length}）</h4>${rel(data.in, '←')}
+      <h4>它指向（出边 ${data.out.length}）</h4>${rel(data.out, '→')}
+      <h4>全部属性</h4><table>${rows(props, Object.keys(props).sort())}</table>`;
+    box.querySelectorAll('.geokg-rel').forEach((node) => {
+      node.addEventListener('click', () => {
+        geokgDetail(node.dataset.id);
+        geokgExpand(node.dataset.id);
+      });
+    });
+  } catch (error) {
+    box.innerHTML = `<p class="body-copy">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function geokgBindControls() {
+  refs.geokgGo.addEventListener('click', () => geokgSearch());
+  refs.geokgQ.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') geokgSearch();
+  });
+  [refs.geokgDepth, refs.geokgDirection].forEach((control) => {
+    control.addEventListener('change', () => {
+      if (state.geokg.focus) geokgExpand(state.geokg.focus);
+    });
+  });
+  refs.geokgReset.addEventListener('click', () => {
+    geokgSearch('Brazil');
+    geokgExpand('country.BRA');
+  });
+}
