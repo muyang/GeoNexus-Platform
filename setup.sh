@@ -104,11 +104,20 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 "$VENV_DIR/bin/pip" install -q --upgrade pip
-"$VENV_DIR/bin/pip" install -q -e "$ROOT/core/"
-echo "[OK] geonexus-sdk installed (editable)"
 
-# 安装 geonexus-execution-plane 额外依赖
-"$VENV_DIR/bin/pip" install -q -e "$ROOT/geonexus-execution-plane/" 2>/dev/null || true
+# geonexus-sdk 从 PyPI 装。历史版本这里是 `pip install -e "$ROOT/core/"`，但
+# core/ 属于 SDK 仓库、不在本仓库里——在本地开发机上它恰好存在，在干净检出上
+# 必然失败。若同级目录里确实有 SDK 源码，则优先用可编辑安装（开发更方便）。
+if [ -d "$ROOT/../core" ]; then
+    "$VENV_DIR/bin/pip" install -q -e "$ROOT/../core/"
+    echo "[OK] geonexus-sdk installed from local source ($ROOT/../core)"
+else
+    "$VENV_DIR/bin/pip" install -q "geonexus-sdk[mcp]>=1.0.0"
+    echo "[OK] geonexus-sdk installed from PyPI"
+fi
+
+"$VENV_DIR/bin/pip" install -q -e "$ROOT/geonexus-execution-plane/"
+echo "[OK] geonexus-execution-plane installed (editable)"
 
 # ============================================================
 # Step 4: 验证
@@ -125,26 +134,25 @@ mvn --version 2>&1 | head -1 || echo "[WARN] Maven not working"
 echo -n "    Python SDK: "
 "$VENV_DIR/bin/python" -c "import geonexus; print('geonexus', geonexus.__version__)" 2>&1 || echo "[WARN] SDK not installed"
 
-echo -n "    NDVI handler tests: "
+echo -n "    Python 执行面测试: "
 cd "$ROOT/geonexus-execution-plane"
-"$VENV_DIR/bin/python" -m pytest tests/test_handlers_e2e.py -q 2>&1 | tail -1 || echo "[WARN] E2E tests failed (may need Python 3.12)"
+PYTHONPATH="src" "$VENV_DIR/bin/python" -m pytest tests -q 2>&1 | tail -1 || echo "[WARN] 执行面测试失败"
 
 echo -n "    mgbackend compile: "
 cd "$ROOT/mgbackend"
-mvn compile -q 2>&1 && echo "OK" || echo "[WARN] mgbackend compile failed"
+mvn -q compile 2>&1 && echo "OK" || echo "[WARN] mgbackend compile failed"
 
 echo ""
 echo "========================================"
 echo "  GeoNexus Dev Environment Ready!"
 echo "========================================"
 echo ""
-echo "Start Python execution plane:"
-echo "  source $VENV_DIR/bin/activate"
-echo "  geonexus execution-plane start --port 8787"
+echo "Start Python execution plane (:8787 GeoMCP + :8790 Registry + :8900 Web BFF):"
+echo "  $VENV_DIR/bin/geonexus-execution-plane"
 echo ""
-echo "Start Java mgbackend:"
-echo "  cd mgbackend && mvn spring-boot:run"
+echo "Start everything (Python 执行面 + Java mgbackend):"
+echo "  ./dev.sh all"
 echo ""
 echo "Test:"
-echo "  curl http://localhost:8787/health"
+echo "  curl http://127.0.0.1:8787/health"
 echo "  curl http://localhost:8080/mogan/geocard/list"

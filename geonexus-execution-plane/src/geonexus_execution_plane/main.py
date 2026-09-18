@@ -61,6 +61,7 @@ class ExecutionPlane:
         self._servers: list[Any] = []
         self._registry: Any = None
         self._node: Any = None
+        self._node_handle: Any = None
         self._node_name: str = "execution-plane"
 
         # 确保工作目录存在
@@ -143,12 +144,23 @@ class ExecutionPlane:
         if self.config.oge_endpoint:
             self._register_oge_skills()
 
-        # 广告到 Registry
-        self._node.advertise(registry_url,
-                             endpoint=f"http://0.0.0.0:{self.config.geomcp_port}")
+        # 广告到 Registry。
+        # 内嵌 Registry 用 node_api_key 开了写鉴权，而注册是写操作，所以必须
+        # 把同一把 key 传给 advertise()，否则这里会 401 并打断整个启动流程。
+        # endpoint 用 127.0.0.1 而不是 0.0.0.0：0.0.0.0 是"绑定所有网卡"的通配
+        # 地址，不是客户端能连的目的地址；下面 Web BFF 的 default_node_url 也
+        # 用 127.0.0.1，两边保持一致。
+        self._node.advertise(
+            registry_url,
+            endpoint=f"http://127.0.0.1:{self.config.geomcp_port}",
+            api_key=self.config.node_api_key,
+        )
 
-        # 启动 GeoMCP Server
-        self._node.run()
+        # 在后台线程里启动 GeoMCP Server，**不能**用阻塞的 run()：start() 在
+        # 这里之后还要启动 Web BFF 并打印就绪信息，一旦阻塞这两步就永远不会执行。
+        handle = self._node.start_in_thread()
+        handle.wait_until_ready()
+        self._node_handle = handle
         logger.info("GeoMCP Server started: http://127.0.0.1:%d/geomcp",
                      self.config.geomcp_port)
 
@@ -247,6 +259,11 @@ class ExecutionPlane:
 
     def stop(self) -> None:
         """优雅停止所有组件。"""
+        # GeoMCP 走的是 GeoNode 自己的 uvicorn server，不在 self._servers 里，
+        # 它的 handle 会 stop 掉线程；漏了它 Ctrl-C 之后端口不会释放。
+        if self._node_handle is not None:
+            self._node_handle.stop()
+            self._node_handle = None
         for server in self._servers:
             server.should_exit = True
         logger.info("All components stopped.")
