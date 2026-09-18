@@ -836,7 +836,10 @@ function loadAssetCards(ownerUserId = null) {
 }
 
 function loadRelations() {
-  return db.prepare('SELECT sourceId AS from, targetId AS to, label FROM relations ORDER BY id').all();
+  // "from" is a SQL keyword: unquoted aliases here make every /api/kg request
+  // fail with `near "from": syntax error`. The double quotes keep the JSON
+  // keys as from/to, which is what app.js reads (link.from / link.to).
+  return db.prepare('SELECT sourceId AS "from", targetId AS "to", label FROM relations ORDER BY id').all();
 }
 
 function loadTasks() {
