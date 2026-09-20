@@ -44,3 +44,4 @@ docs/文档/
 # 上面的 *.pdf/*.docx 之类规则拦不住）
 docs/文档/*
 !docs/文档/.gitkeep
+.mplcache/
