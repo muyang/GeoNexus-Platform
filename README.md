@@ -280,6 +280,7 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 |------|------|
 | `docs/platform-architecture.md` | **架构总览（心脏/大脑/手脚/资源）**：四系统定位、集成主链路、身份与权限设计（含架构图） |
 | `docs/user-management.md` | **用户管理设计**：账号模型/注册/认证令牌/三段式权限/个人中心/后台管理（含模块图与验收判据） |
+| `docs/completeness-assessment.md` | **完成度评估（基于代码实测）**：逐层矩阵、五个关键缺口、可复现命令 |
 | `docs/architecture-diagrams.md` | 架构图（管算分离 / OGE 交互 / 契约职责） |
 | `docs/ruoyi-integration-protocol.md` | Java ↔ Python 通信协议 |
 | `docs/python-blackbox-plan.md` | Python 执行面黑盒化方案 |
