@@ -45,3 +45,5 @@ docs/文档/
 docs/文档/*
 !docs/文档/.gitkeep
 .mplcache/
+frontend/node_modules/
+frontend/dist/

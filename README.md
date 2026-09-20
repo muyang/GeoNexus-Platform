@@ -281,6 +281,7 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 | `docs/platform-architecture.md` | **架构总览（心脏/大脑/手脚/资源）**：四系统定位、集成主链路、身份与权限设计（含架构图） |
 | `docs/user-management.md` | **用户管理设计**：账号模型/注册/认证令牌/三段式权限/个人中心/后台管理（含模块图与验收判据） |
 | `docs/completeness-assessment.md` | **完成度评估（基于代码实测）**：逐层矩阵、五个关键缺口、可复现命令 |
+| `frontend/README.md` | **新前端（Vue3 + Vite）**：两个壳（门户浅色 / 莫干深色玻璃）、信息架构、运行与测试 |
 | `docs/architecture-diagrams.md` | 架构图（管算分离 / OGE 交互 / 契约职责） |
 | `docs/ruoyi-integration-protocol.md` | Java ↔ Python 通信协议 |
 | `docs/python-blackbox-plan.md` | Python 执行面黑盒化方案 |
@@ -289,6 +290,33 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 | `docs/product-architecture.md` | 产品架构模型 |
 
 ---
+
+## 前端（Vue3 + Vite）
+
+`frontend/` 是按目标架构重写的前端，替代根目录的单文件 Node 门户（`server.js` 保留为 API/BFF）：
+
+| 壳 | 视觉 | 模块 |
+|---|---|---|
+| 门户 | 浅色 | 门户首页 · 可视化地球 · 全球案例 · 数据资源 · 算子模型 · 算力平台 · 开放社区 · 超级智能体 · 典型应用 · 后台管理 |
+| 莫干地球系统 | 深色玻璃（对齐 `mogan-digital-earth` 参考件） | 首页 · 地图 · GeoCard · 案例中心 · 智能工作台 · 个人中心 |
+
+```bash
+# 本机 npm 全局指向 node v9 的旧 npm（5.6），必须显式用 nvm 里的 node 22：
+export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
+cd frontend
+npm install            # .npmrc 已把 cache 固定到 /tmp/npmcache（~/.npm 不可写）
+npm run dev            # http://127.0.0.1:5173 ，/api 反代到 VITE_API_TARGET（默认 127.0.0.1:3100）
+npm test && npm run build
+```
+
+> 后端 BFF 默认 **3100**，但如果该端口被别的进程占用（本机实测被 DSH Desktop 占用），
+> `server.js` 会自动顺延到 **3101** —— 此时前端要用
+> `VITE_API_TARGET=http://127.0.0.1:3101 npm run dev`。
+
+### SDK 打通
+
+`/api/sdk/geocards` 由 BFF 代理到 **SDK Registry**（`REGISTRY_URL`，默认 `127.0.0.1:8790`），
+把 GeoCard 归一化后给前端；连不上时前端回退到平台本地目录、再回退演示数据，并在界面标注来源。
 
 ## License
 

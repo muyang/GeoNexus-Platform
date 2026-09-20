@@ -1,0 +1,57 @@
+/* 设计令牌：两个壳各一套，互不污染。
+ * 门户（浅色）沿用既有门户的 cyan-on-white；
+ * 莫干地球系统（深色玻璃）取自参考件 mogan-digital-earth-8793 的 :root。 */
+
+:root {
+  /* ---- 门户（浅色）---- */
+  --p-bg: #f8fafc;
+  --p-surface: #ffffff;
+  --p-surface-soft: #f0fdff;
+  --p-line: #cffafe;
+  --p-line-strong: #67e8f9;
+  --p-text: #0f172a;
+  --p-muted: #475569;
+  --p-soft: #64748b;
+  --p-cyan: #06b6d4;
+  --p-cyan-strong: #0891b2;
+  --p-cyan-soft: rgba(6, 182, 212, 0.14);
+  --p-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
+  --p-radius: 12px;
+
+  /* ---- 莫干地球系统（深色玻璃，对齐参考件）---- */
+  --e-bg: #04060d;
+  --e-ink: #dfe9f5;
+  --e-dim: #7d8aa0;
+  --e-line: rgba(120, 160, 220, 0.14);
+  --e-glass: rgba(10, 16, 30, 0.72);
+  --e-glass2: rgba(14, 22, 40, 0.86);
+  --e-glass-solid: rgba(9, 14, 28, 0.78);
+  --e-cyan: #57d7ff;
+  --e-teal: #3ce6b0;
+  --e-amber: #ffc65c;
+  --e-rose: #ff7a90;
+  --e-violet: #b48bff;
+  --e-local: #8fd3ff;
+  --e-prompt-fill-1: rgba(56, 40, 92, 0.58);
+  --e-prompt-fill-2: rgba(20, 16, 36, 0.66);
+  --e-prompt-border: rgba(186, 158, 255, 0.3);
+  --e-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  --e-blur: blur(14px);
+
+  --font-cn: "Avenir Next", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* 深色壳内的 Element Plus 变量对齐（弹窗/表格浮在地图上时必须也是玻璃） */
+html[data-shell="earth"] {
+  --el-bg-color: var(--e-glass2);
+  --el-bg-color-overlay: var(--e-glass2);
+  --el-text-color-primary: var(--e-ink);
+  --el-text-color-regular: var(--e-ink);
+  --el-text-color-secondary: var(--e-dim);
+  --el-border-color: var(--e-line);
+  --el-border-color-light: var(--e-line);
+  --el-fill-color-blank: transparent;
+  --el-color-primary: var(--e-cyan);
+  color-scheme: dark;
+}

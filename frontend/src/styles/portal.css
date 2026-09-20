@@ -1,0 +1,35 @@
+/* 门户壳（浅色）：顶栏 + 侧边菜单 + 内容区 */
+.portal { display: grid; grid-template-rows: 56px 1fr; height: 100%; }
+.portal-top { display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--p-surface); border-bottom: 1px solid var(--p-line); }
+.portal-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
+.portal-brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--p-cyan); }
+.portal-brand small { font-weight: 500; color: var(--p-soft); }
+.portal-top .spacer { flex: 1; }
+.portal-body { display: grid; grid-template-columns: 232px 1fr; min-height: 0; }
+.portal-side { background: var(--p-surface); border-right: 1px solid var(--p-line);
+  padding: 12px 10px; overflow: auto; }
+.portal-side h4 { margin: 14px 10px 6px; font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--p-soft); }
+.portal-side a { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 2px 0;
+  border-radius: 8px; color: var(--p-text); text-decoration: none; font-size: 14px; }
+.portal-side a:hover { background: var(--p-surface-soft); }
+.portal-side a.router-link-active { background: var(--p-cyan-soft); color: var(--p-cyan-strong); font-weight: 600; }
+.portal-main { padding: 20px 24px 40px; overflow: auto; min-height: 0; }
+
+.page-head { margin-bottom: 16px; }
+.page-head h1 { margin: 0 0 6px; font-size: 22px; }
+.page-head p { margin: 0; color: var(--p-muted); max-width: 76ch; }
+.card-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.card { background: var(--p-surface); border: 1px solid var(--p-line); border-radius: var(--p-radius);
+  padding: 14px 16px; box-shadow: var(--p-shadow); }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card p { margin: 0; color: var(--p-muted); font-size: 13px; line-height: 1.55; }
+.card .kpi { font-size: 26px; font-weight: 700; color: var(--p-cyan-strong); }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+  background: var(--p-cyan-soft); color: var(--p-cyan-strong); }
+.hero { border: 1px solid var(--p-line-strong); border-radius: 16px; padding: 20px 22px;
+  background: linear-gradient(135deg, var(--p-surface-soft), var(--p-surface)); margin-bottom: 18px; }
+.hero h1 { margin: 0 0 8px; font-size: 24px; }
+.notice { border-left: 3px solid var(--p-cyan); background: var(--p-surface-soft);
+  padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--p-muted); }

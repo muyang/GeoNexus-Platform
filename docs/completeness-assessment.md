@@ -7,6 +7,11 @@
 
 ---
 
+> **进展更新（本轮）**：新增 `frontend/`（Vue3 + Vite）：门户浅色壳 + 莫干深色玻璃壳、
+> 15 条路由、RBAC 守卫与 scopes 判定、MapLibre 地图与 GeoCard 图层、
+> `/api/sdk/geocards` 已真实代理到 SDK Registry（实测拿到 `sentinel-2-amazon`）、
+> 13 项单测通过 + 前端 CI。下表为**新增前端之前**的实测结论，保留作基线对照。
+
 ## 一、结论（一句话）
 
 **当前平台是一个"能力目录 + 任务 + 图谱"的 Node/SQLite 管理演示门户，而不是目标架构里的
