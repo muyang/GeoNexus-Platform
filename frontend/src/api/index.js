@@ -60,7 +60,14 @@ export const cardApi = {
 }
 
 export const caseApi = {
-  list: () => withFallback(() => get('/api/sdk/cases'), seedCases, '案例库')
+  list: () => withFallback(() => get('/api/sdk/cases'), seedCases, '案例库'),
+  /** 案例复跑：平台把案例的 runSpec 翻译成一次 SDK 执行（见 docs/backend-governance.md）。 */
+  run: (caseId) => post(`/api/cases/${encodeURIComponent(caseId)}/run`),
+  runs: (caseId) => get(`/api/cases/${encodeURIComponent(caseId)}/runs`),
+  runDetail: (runId) => get(`/api/runs/${encodeURIComponent(runId)}`),
+  cancelRun: (runId) => post(`/api/runs/${encodeURIComponent(runId)}/cancel`),
+  /** 产物地址：SDK 不提供文件服务，由平台受控转发（白名单根目录）。 */
+  artifactUrl: (runId, name) => `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`
 }
 
 export const workbenchApi = {

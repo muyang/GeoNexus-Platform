@@ -283,6 +283,7 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 | `docs/completeness-assessment.md` | **完成度评估（基于代码实测）**：逐层矩阵、五个关键缺口、可复现命令 |
 | `frontend/README.md` | **新前端（Vue3 + Vite）**：两个壳（门户浅色 / 莫干深色玻璃）、信息架构、运行与测试 |
 | `docs/backend-governance.md` | **治理面后端**：案例库 / 审批 / 配额 / 九大模块内容 + GeoCard 发布审核流（含接口表与实测时序） |
+| `docs/identity-migration.md` | **身份迁 RuoYi**：Java 侧 sys_* 模型与 RS256/JWKS、业务面验签、前端双后端分流、验证证据 |
 | `docs/architecture-diagrams.md` | 架构图（管算分离 / OGE 交互 / 契约职责） |
 | `docs/ruoyi-integration-protocol.md` | Java ↔ Python 通信协议 |
 | `docs/python-blackbox-plan.md` | Python 执行面黑盒化方案 |
@@ -313,6 +314,24 @@ npm test && npm run build
 > 后端 BFF 默认 **3100**，但如果该端口被别的进程占用（本机实测被 DSH Desktop 占用），
 > `server.js` 会自动顺延到 **3101** —— 此时前端要用
 > `VITE_API_TARGET=http://127.0.0.1:3101 npm run dev`。
+
+### 身份权威（Java / RuoYi）
+
+身份在 `mgbackend`（Spring Boot + MyBatis-Plus，RuoYi 风格的 `sys_*` 表），RS256 JWT + JWKS：
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+# 本机 ~/.m2 不可写 → 指定可写本地仓库（Maven 从 https://archive.apache.org/dist/maven/ 下载）
+mvn -Dmaven.repo.local=/tmp/m2repo test        # 30 个用例（身份 18 + 既有 12）
+mvn -Dmaven.repo.local=/tmp/m2repo package -DskipTests
+java -jar mgbackend/target/mgbackend-1.0.0-SNAPSHOT.jar --server.port=8080
+# 管理员种子：admin / Admin@GeoNexus2026（可用 geonexus.identity.* 覆盖）
+```
+
+前端按职责分流两个后端（生产同理）：`/api/auth`、`/api/system`、`/.well-known` → Java；
+其余 `/api` → Node BFF。Node BFF 用 **JWKS 验签**接受 Java 令牌（`IDENTITY_JWKS_URL`）。
+详见 `docs/identity-migration.md`。
 
 ### 治理面（后端自证）
 

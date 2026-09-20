@@ -1,5 +1,6 @@
 package com.geonexus.mgbackend;
 
+import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -18,7 +19,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * </pre>
  */
 @SpringBootApplication
-@MapperScan("com.geonexus.mgbackend.mapper")
+// 按注解扫描全部子包的 Mapper：新增 identity.mapper 时不必再改这一行
+@MapperScan(basePackages = "com.geonexus.mgbackend", annotationClass = Mapper.class)
 public class GeoNexusMgApplication {
 
     public static void main(String[] args) {

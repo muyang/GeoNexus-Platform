@@ -57,7 +57,8 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   // 开发期演示入口：?demo=1 直接以演示账号进入（生产构建无此分支）
-  if (import.meta.env.DEV && to.query.demo === '1' && !auth.loggedIn) await auth.applyDemoSession()
+  const demo = to.query.demo
+  if (import.meta.env.DEV && demo && !auth.loggedIn) await auth.applyDemoSession(demo === 'admin')
   if (to.meta.public) return true
   if (!auth.loggedIn) return { name: 'login', query: { redirect: to.fullPath } }
   const perm = to.meta.perm

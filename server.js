@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { createSdkClient } = require('./lib/sdk-client');
 const { createGovernance } = require('./lib/governance');
+const { createSdkWebClient } = require('./lib/sdk-web-client');
+const { createJwtVerifier } = require('./lib/jwt-verify');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
@@ -37,6 +39,14 @@ db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 
 /** 老库幂等迁移：SQLite 没有 ADD COLUMN IF NOT EXISTS，重复列错误直接吞掉。 */
+/** Java 身份签发的 JWT 验签器（模块级：getAuthUser 需要，不能放在启动函数作用域里）。 */
+const jwtVerifier = createJwtVerifier({
+  jwksUrl: process.env.IDENTITY_JWKS_URL || 'http://127.0.0.1:8080/.well-known/jwks.json',
+  issuer: process.env.IDENTITY_ISSUER || 'geonexus-platform',
+  refreshMs: Number(process.env.IDENTITY_JWKS_TTL_MS || 60000),
+  onRotate: (kid) => console.warn(`[identity] 收到未知 kid=${kid}，立即重取 JWKS（公钥可能已轮换）`)
+});
+
 function migrate() {
   for (const stmt of [
     "ALTER TABLE users ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'",
@@ -294,6 +304,11 @@ function getAuthUser(req) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!token) return null;
+  // 身份权威迁到 Java 之后，Java 签发的 RS256 JWT 必须同样被业务面接受（用 JWKS 就地验签）
+  if (token.split('.').length === 3) {
+    const claims = jwtVerifier.verify(token);
+    if (claims) return { ...jwtVerifier.toUser(claims), sessionToken: token };
+  }
   const row = db.prepare(`
     SELECT users.* FROM sessions
     JOIN users ON users.id = sessions.userId
@@ -1830,8 +1845,15 @@ async function handleApi(req, res, url) {
 function listen(port) {
   // 治理面（案例 / 审批 / 配额 / 九大模块内容 + GeoCard 发布审核）：见 lib/governance.js
   const sdk = createSdkClient();
+  jwtVerifier.refresh().then((ok) => {
+    console.log(ok
+      ? `[identity] 已加载 Java JWKS（${jwtVerifier.keyCount} 个公钥），Java 令牌可在业务面直接使用`
+      : `[identity] 未能加载 Java JWKS：${jwtVerifier.lastError}（Java 令牌暂不可用于业务面，会话令牌不受影响）`);
+    setInterval(() => jwtVerifier.refresh(), 10 * 60 * 1000).unref();
+  });
+  const sdkWeb = createSdkWebClient();
   const governance = createGovernance({
-    db, send, readBody, requireAuth, getAuthUser, sdk, nowIso,
+    db, send, readBody, requireAuth, getAuthUser, sdk, sdkWeb, uploadsDir: UPLOADS_DIR, nowIso,
     logger: (msg) => console.error(`[governance] ${msg}`)
   });
 
