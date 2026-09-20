@@ -201,7 +201,7 @@ RuoYi 的 `data_scope` 只在 Java 里做 SQL 过滤是**不够的**——Python
 | **我的资产** | GeoCard 目录（`owner`/`tenant`/`visibility`）+ OGE 资源授权 | Registry 按身份查 |
 | 我的案例 | 平台案例中心 | 本地 |
 | 我的知识 | GeoKG 我 / 我单位贡献的实体与数据集 | `GET /api/v1/geokg/search?contributor=` |
-| 我的配额 | `mogan_quota` + Scheduler 实时占用 | 本地 + SDK |
+| 我的配额 | `mogan_quota` + Scheduler 实时占用 + **OGE 计量**（OGE 侧只看到平台这个应用，用量必须平台自己记） | 本地 + SDK + 平台记账 |
 | 我的消息 | `sys_notice` + 系统通知 | 本地 |
 | 我的审计 | `sys_logininfor` / `sys_oper_log` / `mogan_audit` | 本地 |
 | 我的申请 | `mogan_approval`（我提交的发布 / 提权申请及状态） | 本地 |
