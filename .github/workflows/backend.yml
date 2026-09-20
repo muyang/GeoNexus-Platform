@@ -1,0 +1,19 @@
+name: Backend
+
+on:
+  push:
+    paths: ['server.js', 'lib/**', 'tests/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['server.js', 'lib/**', 'tests/**', '.github/workflows/backend.yml']
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Node API tests (governance + SDK review flow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }     # node:sqlite 需要 >= 22
+      - name: Unit + API tests
+        run: node --test tests/*.test.mjs

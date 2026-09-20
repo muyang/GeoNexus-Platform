@@ -7,7 +7,12 @@
 
 ---
 
-> **进展更新（本轮）**：新增 `frontend/`（Vue3 + Vite）：门户浅色壳 + 莫干深色玻璃壳、
+> **进展更新（后一轮）**：治理面落库并自证 —— 案例库 / 审批 / 配额 / 九大模块内容（SQLite + 16 个后端用例全过），
+> **GeoCard 发布已走 SDK 审批流**（实测 `modis-nightlights-2024`：提交 pending → SDK 审核队列 → 平台通过 → SDK approved → 公开目录可见），
+> 后台管理补齐九个模块的内容管理 + 审批 + 配额 + 审计，地图支持矢量/栅格四底图切换与兜底。
+> 仍未动：身份权威迁 RuoYi（`mvn` 本机不可用；Maven 已确认可从 archive 下载，需要时可装）。
+>
+> **进展更新（前一轮）**：新增 `frontend/`（Vue3 + Vite）：门户浅色壳 + 莫干深色玻璃壳、
 > 15 条路由、RBAC 守卫与 scopes 判定、MapLibre 地图与 GeoCard 图层、
 > `/api/sdk/geocards` 已真实代理到 SDK Registry（实测拿到 `sentinel-2-amazon`）、
 > 13 项单测通过 + 前端 CI。下表为**新增前端之前**的实测结论，保留作基线对照。

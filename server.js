@@ -4,12 +4,14 @@ const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { createSdkClient } = require('./lib/sdk-client');
+const { createGovernance } = require('./lib/governance');
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
-const UPLOADS_DIR = path.join(ROOT, 'uploads');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
+const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.join(ROOT, 'uploads');
 const DB_PATH = path.join(DATA_DIR, 'geonexus.db');
-const SEED_PATH = path.join(DATA_DIR, 'registry.json');
+const SEED_PATH = process.env.SEED_PATH ? path.resolve(process.env.SEED_PATH) : path.join(DATA_DIR, 'registry.json');
 const START_PORT = Number(process.env.PORT || 3100);
 
 const MIME = {
@@ -33,6 +35,30 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
+
+/** 老库幂等迁移：SQLite 没有 ADD COLUMN IF NOT EXISTS，重复列错误直接吞掉。 */
+function migrate() {
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE users ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]'"
+  ]) {
+    try { db.exec(stmt); } catch { /* 列已存在 */ }
+  }
+}
+
+/** 角色与 scopes 解析。ADMIN_EMAILS 是引导第一位管理员的唯一入口（见 README）。 */
+function resolveRoles(row) {
+  if (!row) return { roles: [], scopes: [], isAdmin: false };
+  const adminEmails = String(process.env.ADMIN_EMAILS || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const isAdmin = adminEmails.includes(String(row.email || '').toLowerCase());
+  const parse = (v, fallback) => {
+    try { const a = JSON.parse(v || '[]'); return Array.isArray(a) && a.length ? a : fallback; } catch { return fallback; }
+  };
+  const roles = isAdmin ? [...new Set([...parse(row.roles, []), 'platform_admin'])] : parse(row.roles, ['public_visitor']);
+  const scopes = isAdmin ? ['*'] : parse(row.scopes, ['earth:view', 'card:read', 'case:read']);
+  return { roles, scopes, isAdmin };
+}
 
 function initSchema() {
   db.exec(`
@@ -101,7 +127,9 @@ function initSchema() {
       passwordHash TEXT NOT NULL,
       salt TEXT NOT NULL,
       org TEXT NOT NULL,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      roles TEXT NOT NULL DEFAULT '[]',
+      scopes TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -243,53 +271,6 @@ function parseJson(value, fallback = []) {
   return typeof value === 'string' ? JSON.parse(value) : value;
 }
 
-/** 带超时的 JSON GET（Node 18+ 自带 fetch）。 */
-async function fetchJson(url, timeoutMs = 6000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** SDK Registry 的卡片 → 前端统一形状（含可见性/溯源，供地图与目录共用）。 */
-function normalizeSdkCard(entry) {
-  const card = entry?.card || entry || {};
-  const spatial = card.spatial || {};
-  const provenance = card.provenance || {};
-  const compliance = card.compliance || {};
-  const access = card.access || {};
-  return {
-    id: card.id,
-    type: card.type || 'data',
-    title: card.name || card.id,
-    description: card.description || '',
-    provider: provenance.provider || access.endpoint || '',
-    ref: access.endpoint || card.id,
-    owner: entry?.node_url || access.endpoint || 'unknown-node',
-    visibility: compliance.sensitivity === 'public' ? 'public' : (compliance.sensitivity || 'tenant'),
-    sovereignty: compliance.sovereignty || null,
-    license: typeof card.license === 'string' ? card.license : (card.license?.name || ''),
-    tags: card.tags || [],
-    capabilities: (card.capabilities || []).map((c) => c.name || c).filter(Boolean),
-    protocol: access.protocol || '',
-    bbox: Array.isArray(spatial.bbox) && spatial.bbox.length === 4 ? spatial.bbox : null,
-    temporal: card.temporal || null,
-    status: entry?.status || 'unknown',
-    registeredAt: entry?.registered_at || null,
-    source: 'sdk-registry'
-  };
-}
-
-/** 平台案例库（占位：落库后从 SQLite 读，形状与 /api/sdk/cases 一致）。 */
-function listCases() {
-  return [];
-}
-
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const passwordHash = crypto.pbkdf2Sync(String(password), salt, 120000, 32, 'sha256').toString('hex');
   return { salt, passwordHash };
@@ -297,7 +278,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
 
 function publicUser(row) {
   if (!row) return null;
-  return { id: row.id, name: row.name, email: row.email, org: row.org, createdAt: row.createdAt };
+  const { roles, scopes, isAdmin } = resolveRoles(row);
+  return { id: row.id, name: row.name, email: row.email, org: row.org, createdAt: row.createdAt,
+    roles, scopes, isAdmin: Boolean(isAdmin) };
 }
 
 function createSession(userId) {
@@ -316,7 +299,9 @@ function getAuthUser(req) {
     JOIN users ON users.id = sessions.userId
     WHERE sessions.token = ? AND sessions.expiresAt > datetime('now')
   `).get(token);
-  return row || null;
+  if (!row) return null;
+  const { roles, scopes, isAdmin } = resolveRoles(row);
+  return { ...row, roles, scopes, isAdmin: Boolean(isAdmin) };
 }
 
 function requireAuth(req, res) {
@@ -329,6 +314,10 @@ function requireAuth(req, res) {
 }
 
 function seedFromJson() {
+  if (!fs.existsSync(SEED_PATH)) {
+    console.warn(`[seed] 未找到种子文件 ${SEED_PATH}，跳过能力种子导入（服务继续启动）`);
+    return;
+  }
   const count = db.prepare('SELECT COUNT(*) AS count FROM capabilities').get().count;
   if (count > 0) return;
 
@@ -504,6 +493,7 @@ function seedDataProducts() {
 }
 
 initSchema();
+migrate();
 seedFromJson();
 seedDataProducts();
 
@@ -1470,8 +1460,10 @@ async function handleApi(req, res, url) {
     if (existing) return send(res, 409, { error: 'Email already registered' });
     const id = `user.${slugify(body.name)}-${crypto.randomBytes(3).toString('hex')}`;
     const { salt, passwordHash } = hashPassword(body.password);
-    db.prepare('INSERT INTO users (id, name, email, passwordHash, salt, org) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, body.name, String(body.email).toLowerCase(), passwordHash, salt, body.org || 'GeoNexus Workspace');
+    db.prepare('INSERT INTO users (id, name, email, passwordHash, salt, org, roles, scopes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, body.name, String(body.email).toLowerCase(), passwordHash, salt, body.org || 'GeoNexus Workspace',
+          JSON.stringify(body.roles || ['public_visitor']),
+          JSON.stringify(body.scopes || ['earth:view', 'card:read', 'case:read']));
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     const session = createSession(id);
     return send(res, 201, { user: publicUser(user), token: session.token, expiresAt: session.expiresAt });
@@ -1552,37 +1544,6 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const dataProduct = saveDataProduct(body);
     return send(res, 201, { dataProduct, geoCard: dataProduct.geoCard });
-  }
-
-  // ── SDK 打通：GeoCard 目录来自 SDK Registry（而不是门户自产卡片）─────────────
-  //  平台不复制资产：只做「发现 + 归一化 + 转发」，契约权威仍在 SDK。
-  if (req.method === 'GET' && url.pathname === '/api/sdk/geocards') {
-    const registry = process.env.REGISTRY_URL || 'http://127.0.0.1:8790';
-    try {
-      const upstream = await fetchJson(`${registry}/cards`, 6000);
-      const raw = Array.isArray(upstream?.cards) ? upstream.cards : [];
-      const items = raw.map((entry) => normalizeSdkCard(entry));
-      return send(res, 200, {
-        items,
-        count: items.length,
-        source: 'sdk-registry',
-        upstream: registry,
-        degraded: false
-      });
-    } catch (err) {
-      // 明确失败：前端据此回退到本地目录/演示数据，并在界面上标注来源
-      return send(res, 503, {
-        error: `连不上 SDK Registry（${registry}）：${err.message}`,
-        source: 'sdk-registry',
-        upstream: registry,
-        hint: '启动 SDK 侧注册中心，或设置 REGISTRY_URL 指向它'
-      });
-    }
-  }
-
-  // 案例：SDK 侧暂无案例端点，先由平台自己的案例库回答（尚未落库时返回空集，前端回退演示数据）
-  if (req.method === 'GET' && url.pathname === '/api/sdk/cases') {
-    return send(res, 200, { items: listCases(), source: 'platform-case-lib' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/geomcp/register') {
@@ -1867,6 +1828,13 @@ async function handleApi(req, res, url) {
 }
 
 function listen(port) {
+  // 治理面（案例 / 审批 / 配额 / 九大模块内容 + GeoCard 发布审核）：见 lib/governance.js
+  const sdk = createSdkClient();
+  const governance = createGovernance({
+    db, send, readBody, requireAuth, getAuthUser, sdk, nowIso,
+    logger: (msg) => console.error(`[governance] ${msg}`)
+  });
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     // GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
@@ -1875,7 +1843,11 @@ function listen(port) {
       return;
     }
     if (url.pathname.startsWith('/api/')) {
-      handleApi(req, res, url).catch((error) => {
+      // 治理面先分派；返回 false 表示未命中，回落到门户原有 API 处理
+      governance(req, res, url).then((handled) => {
+        if (handled) return;
+        return handleApi(req, res, url);
+      }).catch((error) => {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: error.message }));
       });

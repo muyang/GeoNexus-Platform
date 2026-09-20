@@ -56,14 +56,26 @@ export const useAuthStore = defineStore('auth', {
         this.ready = true
       }
     },
-    /** 仅开发期：无后端也能预览页面（生产构建里 import.meta.env.DEV 为 false，不会被带上）。 */
-    applyDemoSession() {
-      this.apply({
-        token: 'demo-session',
-        user: { id: 'demo', name: '演示账号', email: 'demo@local', org: 'GeoNexus · 离线演示' },
-        roles: ['platform_admin'],
-        scopes: ['*']
-      })
+    /** 仅开发期演示入口（生产构建里 DEV 为 false，不会带上）。
+     *  优先用真实后端注册/登录 demo 账号 —— 这样演示态的权限是真的、可审计的；
+     *  后端不可达时才退回纯离线身份，并在界面标注。 */
+    async applyDemoSession() {
+      const email = 'demo@local'
+      const password = 'demo-password-123'
+      try {
+        try {
+          await this.login(email, password)
+        } catch {
+          await this.register({ name: '演示账号', email, password, org: 'GeoNexus · 演示' })
+        }
+      } catch {
+        this.apply({
+          token: 'demo-session-offline',
+          user: { id: 'demo', name: '演示账号（离线）', email, org: 'GeoNexus · 离线演示', offline: true },
+          roles: ['platform_admin'],
+          scopes: ['*']
+        })
+      }
     },
     logout() {
       this.token = ''

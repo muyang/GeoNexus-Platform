@@ -282,6 +282,7 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 | `docs/user-management.md` | **用户管理设计**：账号模型/注册/认证令牌/三段式权限/个人中心/后台管理（含模块图与验收判据） |
 | `docs/completeness-assessment.md` | **完成度评估（基于代码实测）**：逐层矩阵、五个关键缺口、可复现命令 |
 | `frontend/README.md` | **新前端（Vue3 + Vite）**：两个壳（门户浅色 / 莫干深色玻璃）、信息架构、运行与测试 |
+| `docs/backend-governance.md` | **治理面后端**：案例库 / 审批 / 配额 / 九大模块内容 + GeoCard 发布审核流（含接口表与实测时序） |
 | `docs/architecture-diagrams.md` | 架构图（管算分离 / OGE 交互 / 契约职责） |
 | `docs/ruoyi-integration-protocol.md` | Java ↔ Python 通信协议 |
 | `docs/python-blackbox-plan.md` | Python 执行面黑盒化方案 |
@@ -312,6 +313,18 @@ npm test && npm run build
 > 后端 BFF 默认 **3100**，但如果该端口被别的进程占用（本机实测被 DSH Desktop 占用），
 > `server.js` 会自动顺延到 **3101** —— 此时前端要用
 > `VITE_API_TARGET=http://127.0.0.1:3101 npm run dev`。
+
+### 治理面（后端自证）
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"   # node >= 22（node:sqlite）
+npm test                # 16 个用例：案例库/审批/配额/模块内容 + 假 SDK Registry 钉住发布审核流
+ADMIN_EMAILS=you@example.com node server.js   # 引导第一位管理员（注册 ≠ 授权）
+```
+
+案例库、审批单（`approvals`）、配额（`quotas`）、九大模块内容（`module_items`）与审计（`audit_events`）
+都落在 SQLite；**GeoCard 的语义与状态权威仍在 SDK Registry**，平台只提交与转发。
+详见 `docs/backend-governance.md`。
 
 ### SDK 打通
 
