@@ -23,6 +23,24 @@ describe('身份与权限（auth store）', () => {
     expect(auth.hasPerm('system:user:list')).toBe(true)
   })
 
+  it('/me 的 {user:{roles,scopes}} 形状也要被识别（刷新后不能变无权限）', () => {
+    const auth = useAuthStore()
+    auth.apply({ user: { id: 1, name: '管理员', roles: ['platform_admin'], scopes: ['*'], tenant: 'GeoNexus', deptId: 1000 },
+      token: 'jwt' })
+    expect(auth.roles).toEqual(['platform_admin'])
+    expect(auth.scopes).toEqual(['*'])
+    expect(auth.hasPerm('system:user:list')).toBe(true)
+    expect(auth.tenant).toBe('GeoNexus')
+    expect(auth.deptId).toBe(1000)
+  })
+
+  it('顶层 claims 形状同样可用（RuoYi JWT）', () => {
+    const auth = useAuthStore()
+    auth.apply({ token: 'jwt2', user: { name: 'x' }, claims: { roles: ['org_member'], scopes: ['card:read'] } })
+    expect(auth.hasPerm('card:read')).toBe(true)
+    expect(auth.hasPerm('system:user:list')).toBe(false)
+  })
+
   it('logout 清空令牌与角色', () => {
     const auth = useAuthStore()
     auth.apply({ token: 't', roles: ['org_member'], scopes: ['card:read'] })

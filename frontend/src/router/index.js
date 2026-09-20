@@ -56,6 +56,8 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  // 会话还原必须发生在权限判定之前：否则刷新受保护页面会先被判成无权限（实测踩到）
+  if (!auth.ready) await auth.restore()
   // 开发期演示入口：?demo=1 直接以演示账号进入（生产构建无此分支）
   const demo = to.query.demo
   if (import.meta.env.DEV && demo && !auth.loggedIn) await auth.applyDemoSession(demo === 'admin')

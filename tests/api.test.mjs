@@ -128,6 +128,8 @@ function startPlatform({ registryUrl, adminEmails, sdkWebUrl, artifactRoots, jwk
     REGISTRY_URL: registryUrl, SDK_REGISTRY_API_KEY: API_KEY, ADMIN_EMAILS: adminEmails,
     SDK_WEB_URL: sdkWebUrl, SDK_WEB_USER: 'admin', SDK_WEB_PASSWORD: 'admin',
     SDK_NODE_URL: 'http://127.0.0.1:8787', ARTIFACT_ROOTS: artifactRoots,
+    // 测试要直接验证本进程的会话认证与治理面：把身份代理关掉（生产默认是代理到 Java）
+    IDENTITY_BASE_URL: '',
     ...(jwksUrl ? { IDENTITY_JWKS_URL: jwksUrl } : {}) };
   const child = spawn(process.execPath, ['server.js'], { cwd: ROOT, env });
   spawned.push(child);

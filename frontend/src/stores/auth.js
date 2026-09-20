@@ -26,11 +26,13 @@ export const useAuthStore = defineStore('auth', {
     apply(payload) {
       this.token = payload.token || this.token
       this.user = payload.user || this.user
+      // 兼容三种形状：顶层 claims、payload 顶层字段、以及 /me 的 {user:{roles,scopes}}
+      // （漏掉第三种会导致"刷新后变无权限"——构建产物里实测踩到过）
       const claims = payload.claims || payload.user?.claims || {}
-      this.roles = payload.roles || claims.roles || this.roles
-      this.scopes = payload.scopes || claims.scopes || this.scopes
-      this.tenant = payload.tenant ?? claims.tenant ?? this.tenant
-      this.deptId = payload.deptId ?? claims.deptId ?? this.deptId
+      this.roles = payload.roles || claims.roles || payload.user?.roles || this.roles
+      this.scopes = payload.scopes || claims.scopes || payload.user?.scopes || this.scopes
+      this.tenant = payload.tenant ?? claims.tenant ?? payload.user?.tenant ?? this.tenant
+      this.deptId = payload.deptId ?? claims.deptId ?? payload.user?.deptId ?? this.deptId
       if (this.token) localStorage.setItem(TOKEN_KEY, this.token)
       this.ready = true
     },
@@ -46,14 +48,22 @@ export const useAuthStore = defineStore('auth', {
     },
     /** 刷新后会话仍在，但 user/roles 丢了 —— 用 /me 还原；失败则清态。 */
     async restore() {
-      if (!this.token) { this.ready = true; return }
+      if (this.ready) return
+      if (this._restoring) return this._restoring          // 幂等：并发调用共享同一次请求
+      this._restoring = (async () => {
+        await this._doRestore()
+        this.ready = true
+        this._restoring = null
+      })()
+      return this._restoring
+    },
+    async _doRestore() {
+      if (!this.token) return
       try {
         const me = await authApi.me()
         this.apply({ user: me.user, token: me.token || this.token, ...me })
       } catch {
         this.logout()
-      } finally {
-        this.ready = true
       }
     },
     /** 仅开发期演示入口（生产构建里 DEV 为 false，不会带上）。

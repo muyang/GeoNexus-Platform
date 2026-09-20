@@ -15,6 +15,14 @@ const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_D
 const DB_PATH = path.join(DATA_DIR, 'geonexus.db');
 const SEED_PATH = process.env.SEED_PATH ? path.resolve(process.env.SEED_PATH) : path.join(DATA_DIR, 'registry.json');
 const START_PORT = Number(process.env.PORT || 3100);
+/** 新版前端（Vue3 + Vite）的构建产物：网站正式入口就指向它 */
+const FRONTEND_DIST = path.join(ROOT, 'frontend', 'dist');
+/** 旧版单文件门户：保留在 /legacy/ 下，不再占根路径 */
+const LEGACY_PREFIX = '/legacy';
+/** 身份权威（Java / RuoYi）。为空串则回落到本进程内置的会话认证（测试用） */
+const IDENTITY_BASE_URL = process.env.IDENTITY_BASE_URL === undefined
+  ? 'http://127.0.0.1:8080'
+  : process.env.IDENTITY_BASE_URL.replace(/\/$/, '');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -1448,8 +1456,54 @@ function proxyGeoKG(req, res, url) {
   proxyReq.end();
 }
 
+/** 身份与权限转发给 Java（RuoYi）：网站只有一个入口，由本进程按路径分流 —— 与生产反向代理规则一致。 */
+function proxyIdentity(req, res, url) {
+  const target = new URL(`${IDENTITY_BASE_URL}${url.pathname}${url.search}`);
+  const proxyReq = http.request({
+    hostname: target.hostname, port: target.port, path: target.pathname + target.search,
+    method: req.method, headers: { ...req.headers, host: target.host }
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+  proxyReq.on('error', (err) => {
+    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      error: `连不上 Java 身份服务（${IDENTITY_BASE_URL}）：${err.message}`,
+      hint: '启动 mgbackend，或设 IDENTITY_BASE_URL= 空串回落到本进程内置认证'
+    }));
+  });
+  proxyReq.setTimeout(15000, () => proxyReq.destroy(new Error('身份服务响应超时（15s）')));
+  req.pipe(proxyReq);
+}
+
+/** 新前端是 SPA：资源命中就发文件，否则回落到 index.html 交给前端路由。 */
+function serveFrontend(req, res, pathname) {
+  const distIndex = path.join(FRONTEND_DIST, 'index.html');
+  if (!fs.existsSync(distIndex)) {
+    res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>前端尚未构建</h1><p>请在 frontend/ 执行：npm install && npm run build</p>');
+    return;
+  }
+  const rel = pathname.replace(/^\/+/, '');
+  const candidate = path.join(FRONTEND_DIST, rel);
+  const isAsset = path.extname(rel) !== '';
+  if (rel && isAsset && candidate.startsWith(FRONTEND_DIST)
+      && fs.existsSync(candidate) && !fs.statSync(candidate).isDirectory()) {
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(candidate).toLowerCase()] || 'application/octet-stream',
+      'Cache-Control': 'public, max-age=31536000, immutable' });
+    fs.createReadStream(candidate).pipe(res);
+    return;
+  }
+  if (isAsset) return notFound(res);
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  fs.createReadStream(distIndex).pipe(res);
+}
+
 function serveStatic(req, res, pathname) {
-  let filePath = pathname === '/' ? '/index.html' : pathname;
+  // 旧版门户挂在 /legacy/ 下（/legacy 与 /legacy/ 都给 index.html）
+  const rel = pathname.replace(new RegExp('^' + LEGACY_PREFIX + '/?'), '/');
+  let filePath = (rel === '/' || rel === '') ? '/index.html' : rel;
   filePath = path.join(ROOT, filePath);
   if (!filePath.startsWith(ROOT) && !filePath.startsWith(UPLOADS_DIR)) return notFound(res);
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
@@ -1859,7 +1913,13 @@ function listen(port) {
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    // GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
+    // 1) 身份与权限 → Java（RuoYi 是唯一身份权威）
+    if (IDENTITY_BASE_URL && (url.pathname.startsWith('/api/auth')
+        || url.pathname.startsWith('/api/system') || url.pathname.startsWith('/.well-known'))) {
+      proxyIdentity(req, res, url);
+      return;
+    }
+    // 2) GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
     if (url.pathname.startsWith('/api/geokg/')) {
       proxyGeoKG(req, res, url);
       return;
@@ -1875,7 +1935,12 @@ function listen(port) {
       });
       return;
     }
-    serveStatic(req, res, url.pathname);
+    // 3) 旧版门户 → /legacy/**；其余 → 新前端（SPA）
+    if (url.pathname === LEGACY_PREFIX || url.pathname.startsWith(LEGACY_PREFIX + '/')) {
+      serveStatic(req, res, url.pathname);
+      return;
+    }
+    serveFrontend(req, res, url.pathname);
   });
 
   server.once('error', (error) => {
@@ -1890,6 +1955,9 @@ function listen(port) {
 
   server.listen(port, () => {
     console.log(`GeoNexus API running at http://localhost:${port}`);
+    console.log(`  网站入口（新版前端）: http://localhost:${port}/`);
+    console.log(`  旧版门户（保留）    : http://localhost:${port}/legacy/`);
+    console.log(`  身份权威            : ${IDENTITY_BASE_URL || '本进程内置会话认证'}`);
   });
 }
 

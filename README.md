@@ -293,6 +293,39 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 
 ---
 
+## 网站入口
+
+**一个入口，一个端口**：Node BFF 既提供前端产物，也按路径把请求分流到各后端。
+
+```
+http://127.0.0.1:3101/            新版前端（Vue3 + Vite 构建产物）← 网站入口
+http://127.0.0.1:3101/legacy/     旧版单文件门户（保留，不再占根路径）
+http://127.0.0.1:3101/api/auth/*  → Java 身份服务（RuoYi）
+http://127.0.0.1:3101/api/system/* → Java 身份服务
+http://127.0.0.1:3101/.well-known/jwks.json → Java（公钥分发）
+http://127.0.0.1:3101/api/*        → 本进程（案例 / 审批 / 配额 / 九大模块 / SDK 与 GeoKG 代理）
+```
+
+| 端口 | 归属 |
+|---|---|
+| **3101** | **本进程（网站入口）** —— 默认端口是 3100，被占用时自动顺延并在日志里打印 |
+| 8090 / 8080 | Java 身份与管理面（`IDENTITY_BASE_URL`，默认 8080） |
+| 8787 / 8790 / 8900 | SDK 执行面 / 注册中心 / Web BFF |
+| 8788 | GeoKG |
+| 5173 | Vite 开发服务器（**仅开发**；生产入口是 3101） |
+
+> 常见困惑：`http://127.0.0.1:3100/` 在本机**不是**本项目 —— 那个端口被别的进程（DSH Desktop）占着，
+> 门户因此顺延到 3101。请以 `node server.js` 启动日志里打印的"网站入口"为准。
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
+cd frontend && npm install && npm run build && cd ..     # 构建前端（local-stack.sh 会自动做）
+IDENTITY_BASE_URL=http://127.0.0.1:8090 node server.js    # 起入口（同时反代身份到 Java）
+```
+
+已登录页面的截图可用 `node scripts/shoot.mjs --base http://127.0.0.1:3101 --path "/admin?tab=modules" --out /tmp/x.png`
+（先真登录拿令牌，再用 CDP 注入 localStorage 后截图 —— 构建产物里没有开发期的 `?demo` 自动登录）。
+
 ## 前端（Vue3 + Vite）
 
 `frontend/` 是按目标架构重写的前端，替代根目录的单文件 Node 门户（`server.js` 保留为 API/BFF）：
