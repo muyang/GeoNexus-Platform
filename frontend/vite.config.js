@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue'
 // 两个后端，按职责分流（这也是部署形态）：
 //   · 身份权威 → Java/RuoYi 管理面（/api/auth、/api/system、/.well-known）
 //   · 门户业务与治理面 → Node BFF（案例、审批、配额、九大模块内容、SDK 代理）
-const API_TARGET = process.env.VITE_API_TARGET || 'http://127.0.0.1:3101'
+const API_TARGET = process.env.VITE_API_TARGET || 'http://127.0.0.1:3301'
 const IDENTITY_TARGET = process.env.VITE_IDENTITY_TARGET || 'http://127.0.0.1:8080'
 
 export default defineConfig({

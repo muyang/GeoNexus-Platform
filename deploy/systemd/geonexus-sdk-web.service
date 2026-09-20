@@ -1,0 +1,32 @@
+# SDK Web BFF（:8900）：唯一"提交后拿 task_id 再轮询"的入口；平台案例复跑走它。
+# 注意：任务状态在内存里，重启即丢 —— 平台侧 case_runs 表才是持久记录。
+[Unit]
+Description=GeoNexus SDK web BFF (task submission with task_id)
+After=network-online.target geonexus-sdk-node.service geonexus-sdk-registry.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/sdk
+EnvironmentFile=/etc/geonexus/geonexus.env
+Environment=PYTHONPATH=/opt/geonexus/sdk/src
+ExecStart=/opt/geonexus/venv/bin/python -u -m geonexus.cli web start --host 127.0.0.1 --port 8900 \
+  --registry http://127.0.0.1:8790 --node http://127.0.0.1:8787 \
+  --user ${SDK_WEB_USER} --user ${SDK_WEB_USER2}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-sdk-web
+
+ReadWritePaths=/var/lib/geonexus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

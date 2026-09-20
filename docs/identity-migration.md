@@ -56,7 +56,7 @@
 | 路径 | 目标 | 职责 |
 |---|---|---|
 | `/api/auth`、`/api/system`、`/.well-known` | Java（`VITE_IDENTITY_TARGET`，默认 8080） | 身份与权限 |
-| 其余 `/api` | Node BFF（`VITE_API_TARGET`，默认 3101） | 案例 / 审批 / 配额 / 九大模块内容 / SDK 代理 |
+| 其余 `/api` | Node BFF（`VITE_API_TARGET`，默认 3301） | 案例 / 审批 / 配额 / 九大模块内容 / SDK 代理 |
 
 前端代码**未因迁移改动**：`authApi` 的路径与响应形状在两个后端上一致。
 
@@ -89,9 +89,9 @@ npm test        # node --test tests/*.test.mjs
 ```
 前端 :5173 ──/api/auth/login──▶ Java :8090   ← RS256 + kid=geonexus-…
             令牌头 {"kid":"geonexus-…","alg":"RS256"}
-前端 :5173 ──/api/cases────────▶ Node :3101  HTTP 200
-           ──/api/admin/overview▶ Node :3101  HTTP 200   ← Java 令牌 + JWKS 验签
-           ──/api/sdk/geocards──▶ Node :3101  HTTP 200
+前端 :5173 ──/api/cases────────▶ Node :3301  HTTP 200
+           ──/api/admin/overview▶ Node :3301  HTTP 200   ← Java 令牌 + JWKS 验签
+           ──/api/sdk/geocards──▶ Node :3301  HTTP 200
 ```
 界面实拍（`docs/images/frontend-admin-java-identity.png`）显示账号为
 `admin@geonexus.local · platform_admin · scopes *` —— 身份来自 Java，业务数据来自 Node BFF。

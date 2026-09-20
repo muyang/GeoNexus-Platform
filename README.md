@@ -18,7 +18,7 @@ Node.js 门户、GeoNode Runtime 服务及全部文档和部署配置。
 | JDK | 17 | `setup.sh` 可自动装（Homebrew / Adoptium） |
 | Maven | 3.8+ | `setup.sh` 可自动装 |
 | Python | 3.10+ | `geonexus-sdk` 要求 ≥3.10 |
-| Node.js | 18+ | 仅 Node 门户（`server.js`）需要；用到 `node:sqlite` |
+| Node.js | **22+** | 网站入口（`server.js`）用到 `node:sqlite`；前端构建需要 20+ |
 
 > ⚠️ **`dev.sh` 过去依赖仓库内自带的 `.jdk17/`、`.maven/`、`.venv-py39/`、
 > `tmp/m2-repo/`。这些二进制已移出仓库**（曾把 585 MB 带进 git 历史）。
@@ -98,8 +98,9 @@ curl -s -X POST http://localhost:8080/mogan/geocard/execute/ndvi \
         ▲
         │ HTTP
 ┌───────┴─────────────────────────────────────┐
-│  🌐 Node 门户 (server.js :3100)              │
-│  Node 联邦视图 · 知识图谱 · 任务 · 资产       │
+│  🌐 网站入口 (:3301)                          │
+│  Vue3 前端 + Node BFF（案例/审批/配额/模块）   │
+│  身份与权限 → Java RuoYi（:8080）             │
 └─────────────────────────────────────────────┘
 ```
 
@@ -110,11 +111,14 @@ curl -s -X POST http://localhost:8080/mogan/geocard/execute/ndvi \
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| 🌐 Node 门户 | http://127.0.0.1:3100/ | 联邦节点视图 / 两张图谱 / 资产 |
-| 🧭 能力图谱 | http://127.0.0.1:3100/capability-graph | 平台自身的能力依赖图（旧路径 `/graph` 仍可用） |
-| 🌍 地理知识 | http://127.0.0.1:3100/geo-knowledge | **GeoKG 地理领域知识图谱**（检索 + 邻域 + 溯源） |
+| 🌐 **网站入口** | http://127.0.0.1:3301/ | Vue3 前端：门户（浅色）+ 莫干地球系统（深色玻璃） |
+| 🗺️ 可视化地球 | http://127.0.0.1:3301/portal/earth | 门户侧地图（浅色底图，GeoCard 覆盖范围） |
+| 📇 GeoCard 目录 | http://127.0.0.1:3301/geocards | 目录来自 **SDK Registry**（非平台自产卡片） |
+| 🧪 案例复跑 | http://127.0.0.1:3301/cases | 一键复跑 → SDK 执行面（Web BFF）→ 产物下载 |
+| 🛠️ 后台管理 | http://127.0.0.1:3301/admin | 九大模块内容 / 审批 / 配额 / 审计 |
+| 🔑 身份与权限 | http://127.0.0.1:3301/api/auth/login | 由 Java（RuoYi）签发 RS256 令牌 |
 | ☕ Java 管理端首页 | http://localhost:8080/ | GeoCard / OGE / NDVI 执行 |
-| 📋 数据治理门户 | http://localhost:8080/portal.html | 数据源与治理视图 |
+| 📋 数据治理门户 | http://localhost:8080/portal.html | 数据源与治理视图（旧 Java 静态页，保留） |
 | 🔧 工作流 | http://localhost:8080/workflow.html | 流程编排视图 |
 | ☕ REST API | http://localhost:8080/mogan/ | 全部 API |
 | 🐍 执行面（GeoMCP） | http://127.0.0.1:8787/health | GeoMCP Server |
@@ -210,7 +214,7 @@ GEOKG_URL=http://127.0.0.1:8788 node server.js
 | 仓库 | 进程 | 端口 |
 |------|------|------|
 | `GeoNexus-SDK` | 执行面 / Registry / Web BFF | 8787 / 8790 / 8900 |
-| **`GeoNexus-Platform`**（本仓库） | Java mgbackend / Node 门户 | 8080 / 3100 |
+| **`GeoNexus-Platform`**（本仓库） | Java mgbackend（身份/管理） / Node BFF（网站入口） | 8080 / **3301** |
 | `GeoKG` | 知识图谱管理面 | 8788 |
 
 Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，默认
@@ -221,9 +225,16 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 ## 项目结构
 
 ```
-├── server.js + index.html + app.js + styles.css   # Node 门户（:3100）
-│   └── server.js 含 /api/geokg/* → GeoKG :8788 的同源只读代理
-├── scripts/check_portal.mjs           # 门户前端静态检查（无依赖，dev.sh test 会跑）
+├── server.js                          # Node BFF：网站入口 + 治理面 + 各后端代理（:3301）
+│   ├── lib/governance.js              # 案例 / 审批 / 配额 / 九大模块内容（SQLite）
+│   ├── lib/sdk-client.js              # → SDK Registry :8790（GeoCard 目录与审核）
+│   ├── lib/sdk-web-client.js          # → SDK Web BFF :8900（唯一带 task_id 的执行入口）
+│   ├── lib/jwt-verify.js              # 验 Java 签发的 RS256 令牌（JWKS，零依赖）
+│   └── /api/geokg/* → GeoKG :8788 的同源只读代理
+├── frontend/                          # 新前端（Vue3 + Vite）：门户浅色 + 莫干深色玻璃
+├── mgbackend/                         # Java 身份与管理面（RuoYi 风格 sys_* + RS256/JWKS）
+├── deploy/                            # nginx 配置 + systemd 单元 + 安装脚本
+├── scripts/shoot.mjs                  # CDP 截图工具（真登录后截已登录页面）
 │
 ├── geonexus-execution-plane/          # Python 执行面（计算面）
 │   ├── src/geonexus_execution_plane/
@@ -298,24 +309,24 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 **一个入口，一个端口**：Node BFF 既提供前端产物，也按路径把请求分流到各后端。
 
 ```
-http://127.0.0.1:3101/            新版前端（Vue3 + Vite 构建产物）← 网站入口
-http://127.0.0.1:3101/legacy/     旧版单文件门户（保留，不再占根路径）
-http://127.0.0.1:3101/api/auth/*  → Java 身份服务（RuoYi）
-http://127.0.0.1:3101/api/system/* → Java 身份服务
-http://127.0.0.1:3101/.well-known/jwks.json → Java（公钥分发）
-http://127.0.0.1:3101/api/*        → 本进程（案例 / 审批 / 配额 / 九大模块 / SDK 与 GeoKG 代理）
+http://127.0.0.1:3301/            新版前端（Vue3 + Vite 构建产物）← 网站入口
+http://127.0.0.1:3301/legacy/     旧版单文件门户（保留，不再占根路径）
+http://127.0.0.1:3301/api/auth/*  → Java 身份服务（RuoYi）
+http://127.0.0.1:3301/api/system/* → Java 身份服务
+http://127.0.0.1:3301/.well-known/jwks.json → Java（公钥分发）
+http://127.0.0.1:3301/api/*        → 本进程（案例 / 审批 / 配额 / 九大模块 / SDK 与 GeoKG 代理）
 ```
 
 | 端口 | 归属 |
 |---|---|
-| **3101** | **本进程（网站入口）** —— 默认端口是 3100，被占用时自动顺延并在日志里打印 |
+| **3301** | **本进程（网站入口）**，已钉死；万一被占用会自动顺延并在日志打印实际端口 |
 | 8090 / 8080 | Java 身份与管理面（`IDENTITY_BASE_URL`，默认 8080） |
 | 8787 / 8790 / 8900 | SDK 执行面 / 注册中心 / Web BFF |
 | 8788 | GeoKG |
-| 5173 | Vite 开发服务器（**仅开发**；生产入口是 3101） |
+| 5173 | Vite 开发服务器（**仅开发**；生产入口是 3301） |
 
-> 常见困惑：`http://127.0.0.1:3100/` 在本机**不是**本项目 —— 那个端口被别的进程（DSH Desktop）占着，
-> 门户因此顺延到 3101。请以 `node server.js` 启动日志里打印的"网站入口"为准。
+> 历史遗留：本机 `:3100` 曾被别的进程（DSH Desktop）占用，门户因此顺延；现已**钉死 3301**。
+> 旧版单文件门户（根目录 `index.html/app.js/styles.css`）**已删除**，站点只由 `frontend/dist` 提供。
 
 ```bash
 export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
@@ -323,12 +334,12 @@ cd frontend && npm install && npm run build && cd ..     # 构建前端（local-
 IDENTITY_BASE_URL=http://127.0.0.1:8090 node server.js    # 起入口（同时反代身份到 Java）
 ```
 
-已登录页面的截图可用 `node scripts/shoot.mjs --base http://127.0.0.1:3101 --path "/admin?tab=modules" --out /tmp/x.png`
+已登录页面的截图可用 `node scripts/shoot.mjs --base http://127.0.0.1:3301 --path "/admin?tab=modules" --out /tmp/x.png`
 （先真登录拿令牌，再用 CDP 注入 localStorage 后截图 —— 构建产物里没有开发期的 `?demo` 自动登录）。
 
 ## 前端（Vue3 + Vite）
 
-`frontend/` 是按目标架构重写的前端，替代根目录的单文件 Node 门户（`server.js` 保留为 API/BFF）：
+`frontend/` 是按目标架构重写的前端（旧版单文件门户已删除，`server.js` 保留为 BFF）：
 
 | 壳 | 视觉 | 模块 |
 |---|---|---|
@@ -340,13 +351,12 @@ IDENTITY_BASE_URL=http://127.0.0.1:8090 node server.js    # 起入口（同时�
 export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
 cd frontend
 npm install            # .npmrc 已把 cache 固定到 /tmp/npmcache（~/.npm 不可写）
-npm run dev            # http://127.0.0.1:5173 ，/api 反代到 VITE_API_TARGET（默认 127.0.0.1:3100）
+npm run dev            # http://127.0.0.1:5173 ，/api 反代到 VITE_API_TARGET（默认 127.0.0.1:3301）
 npm test && npm run build
 ```
 
-> 后端 BFF 默认 **3100**，但如果该端口被别的进程占用（本机实测被 DSH Desktop 占用），
-> `server.js` 会自动顺延到 **3101** —— 此时前端要用
-> `VITE_API_TARGET=http://127.0.0.1:3101 npm run dev`。
+> 网站入口固定 **3301**（`server.js` 的默认端口）。开发时 Vite 的 `/api` 默认就反代到它，
+> 通常不需要额外配置；端口被占时 BFF 会顺延，用 `VITE_API_TARGET` 指过去即可。
 
 ### 身份权威（Java / RuoYi）
 

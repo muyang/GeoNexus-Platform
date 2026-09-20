@@ -1,0 +1,29 @@
+# SDK 注册中心（GeoCard Registry :8790）：资产语义与审核状态的权威。
+[Unit]
+Description=GeoNexus SDK registry (GeoCard catalogue & review)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/sdk
+EnvironmentFile=/etc/geonexus/geonexus.env
+Environment=PYTHONPATH=/opt/geonexus/sdk/src
+ExecStart=/opt/geonexus/venv/bin/python -u -m geonexus.cli registry start --host 127.0.0.1 --port 8790 --persist /var/lib/geonexus/registry.json --health-probe
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-sdk-registry
+
+ReadWritePaths=/var/lib/geonexus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

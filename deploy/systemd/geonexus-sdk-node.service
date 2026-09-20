@@ -1,0 +1,30 @@
+# SDK 执行面（GeoNode / GeoMCP :8787）：真正跑算子的地方（同步 geo.execute）。
+[Unit]
+Description=GeoNexus SDK execution plane (GeoNode / GeoMCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/sdk
+EnvironmentFile=/etc/geonexus/geonexus.env
+Environment=PYTHONPATH=/opt/geonexus/sdk/src:/opt/geonexus/platform/geonexus-execution-plane/src
+Environment=GEONEXUS_WORKDIR=/var/lib/geonexus/exec-work
+ExecStart=/opt/geonexus/venv/bin/python -u -m geonexus.cli node start --host 127.0.0.1 --port 8787 --workdir /var/lib/geonexus/exec-work
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-sdk-node
+
+ReadWritePaths=/var/lib/geonexus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

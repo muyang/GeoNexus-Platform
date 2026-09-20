@@ -1,0 +1,39 @@
+# 网站入口：Node BFF（前端静态 + 治理面 + 各后端代理）。通过 nginx 对外。
+[Unit]
+Description=GeoNexus Portal (Node BFF, website entry)
+Documentation=file:/opt/geonexus/platform/README.md
+After=network-online.target geonexus-mgbackend.service
+Wants=network-online.target
+# 身份服务是硬依赖（业务面的令牌验签要用它的 JWKS）
+After=geonexus-mgbackend.service
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/platform
+EnvironmentFile=/etc/geonexus/geonexus.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-portal
+
+# 只允许写数据目录：SQLite 库、上传、产物白名单
+StateDirectory=geonexus
+ReadWritePaths=/var/lib/geonexus /opt/geonexus/platform/data /opt/geonexus/platform/uploads
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

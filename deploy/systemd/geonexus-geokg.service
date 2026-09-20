@@ -1,0 +1,28 @@
+# GeoKG（知识图谱管理面 :8788）：大脑。平台只做只读代理。
+[Unit]
+Description=GeoKG knowledge graph service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/geokg
+EnvironmentFile=/etc/geonexus/geonexus.env
+ExecStart=/opt/geonexus/venv/bin/python -u -m geokg.api --host 127.0.0.1 --port 8788
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-geokg
+
+ReadWritePaths=/var/lib/geonexus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

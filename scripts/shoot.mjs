@@ -12,7 +12,7 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, cur, i, arr) 
   if (cur.startsWith('--')) acc.push([cur.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : 'true']);
   return acc;
 }, []));
-const base = args.base || 'http://127.0.0.1:3101';
+const base = args.base || 'http://127.0.0.1:3301';
 const path = args.path || '/';
 const out = args.out || '/tmp/shot.png';
 const [user, pass] = (args.login || 'admin:Admin@GeoNexus2026').split(':');

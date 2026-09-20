@@ -1,0 +1,32 @@
+# 身份与权限权威（Java / RuoYi 风格）：签发 RS256 令牌并分发 JWKS。
+[Unit]
+Description=GeoNexus Management Backend (identity & permission authority)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=geonexus
+Group=geonexus
+WorkingDirectory=/opt/geonexus/platform/mgbackend
+EnvironmentFile=/etc/geonexus/geonexus.env
+# 生产建议显式指定 PostgreSQL：SPRING_PROFILES_ACTIVE=prod 并配 PG_* 变量
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=60 -jar /opt/geonexus/platform/mgbackend/mgbackend-1.0.0-SNAPSHOT.jar --server.port=8080
+SuccessExitStatus=143
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=geonexus-mgbackend
+
+ReadWritePaths=/var/lib/geonexus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target

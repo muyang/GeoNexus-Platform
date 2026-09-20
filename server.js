@@ -14,11 +14,9 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.join(ROOT, 'uploads');
 const DB_PATH = path.join(DATA_DIR, 'geonexus.db');
 const SEED_PATH = process.env.SEED_PATH ? path.resolve(process.env.SEED_PATH) : path.join(DATA_DIR, 'registry.json');
-const START_PORT = Number(process.env.PORT || 3100);
+const START_PORT = Number(process.env.PORT || 3301);   // 网站入口固定 3301（被占则顺延并在日志打印）
 /** 新版前端（Vue3 + Vite）的构建产物：网站正式入口就指向它 */
 const FRONTEND_DIST = path.join(ROOT, 'frontend', 'dist');
-/** 旧版单文件门户：保留在 /legacy/ 下，不再占根路径 */
-const LEGACY_PREFIX = '/legacy';
 /** 身份权威（Java / RuoYi）。为空串则回落到本进程内置的会话认证（测试用） */
 const IDENTITY_BASE_URL = process.env.IDENTITY_BASE_URL === undefined
   ? 'http://127.0.0.1:8080'
@@ -1500,19 +1498,16 @@ function serveFrontend(req, res, pathname) {
   fs.createReadStream(distIndex).pipe(res);
 }
 
-function serveStatic(req, res, pathname) {
-  // 旧版门户挂在 /legacy/ 下（/legacy 与 /legacy/ 都给 index.html）
-  const rel = pathname.replace(new RegExp('^' + LEGACY_PREFIX + '/?'), '/');
-  let filePath = (rel === '/' || rel === '') ? '/index.html' : rel;
-  filePath = path.join(ROOT, filePath);
-  if (!filePath.startsWith(ROOT) && !filePath.startsWith(UPLOADS_DIR)) return notFound(res);
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(ROOT, 'index.html');
-  }
+/** 上传文件（/uploads/**）：只允许 UPLOADS_DIR 内，拒绝路径穿越。 */
+function serveUpload(req, res, pathname) {
+  const rel = decodeURIComponent(pathname.replace(/^\/uploads\/?/, ''));
+  const filePath = path.resolve(UPLOADS_DIR, rel);
+  if (!filePath.startsWith(path.resolve(UPLOADS_DIR) + path.sep)) return notFound(res);
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return notFound(res);
   const ext = path.extname(filePath).toLowerCase();
   res.writeHead(200, {
     'Content-Type': MIME[ext] || 'application/octet-stream',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'public, max-age=3600'
   });
   fs.createReadStream(filePath).pipe(res);
 }
@@ -1935,9 +1930,21 @@ function listen(port) {
       });
       return;
     }
-    // 3) 旧版门户 → /legacy/**；其余 → 新前端（SPA）
-    if (url.pathname === LEGACY_PREFIX || url.pathname.startsWith(LEGACY_PREFIX + '/')) {
-      serveStatic(req, res, url.pathname);
+    // 3) 健康检查：不依赖 nginx 也能探活（nginx 侧另有一条同名 location 会短路到这里）
+    if (url.pathname === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end('ok\n');
+      return;
+    }
+    // 3b) 旧版门户已删除：明确告知而不是把 SPA 页面丢给旧书签
+    if (url.pathname === '/legacy' || url.pathname.startsWith('/legacy/')) {
+      res.writeHead(410, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: '旧版门户已移除', entry: '/' }));
+      return;
+    }
+    // 4) 上传文件走专用处理器；其余 → 新前端（SPA）
+    if (url.pathname.startsWith('/uploads/')) {
+      serveUpload(req, res, url.pathname);
       return;
     }
     serveFrontend(req, res, url.pathname);
@@ -1955,8 +1962,7 @@ function listen(port) {
 
   server.listen(port, () => {
     console.log(`GeoNexus API running at http://localhost:${port}`);
-    console.log(`  网站入口（新版前端）: http://localhost:${port}/`);
-    console.log(`  旧版门户（保留）    : http://localhost:${port}/legacy/`);
+    console.log(`  网站入口            : http://localhost:${port}/`);
     console.log(`  身份权威            : ${IDENTITY_BASE_URL || '本进程内置会话认证'}`);
   });
 }

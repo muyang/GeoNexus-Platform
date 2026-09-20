@@ -13,7 +13,7 @@
 # 本机 node 需要 ≥ 20（node:sqlite 由后端用到；前端只需 ≥ 18）
 export PATH="$HOME/.nvm/versions/node/v22.22.1/bin:$PATH"
 npm install          # .npmrc 已把 cache 固定到 /tmp/npmcache
-npm run dev          # http://127.0.0.1:5173 ，/api 反代到后端（默认 127.0.0.1:3100）
+npm run dev          # http://127.0.0.1:5173 ，/api 反代到后端（默认 127.0.0.1:3301）
 npm run build        # 产出 dist/
 npm test             # vitest
 ```
