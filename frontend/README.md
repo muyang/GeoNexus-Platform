@@ -20,6 +20,21 @@ npm test             # vitest
 
 后端地址可用 `VITE_API_TARGET` 覆盖（指向 RuoYi/Java 时无需改前端代码）。
 
+## 访问模型（新增页面时必读）
+
+三档，声明在路由 `meta.access` 上（`src/router/access.js` 判定，纯函数有单测）：
+
+```js
+meta: { shell: 'portal', access: 'public', titleKey: 'portal.home' }        // 游客可看（默认）
+meta: { shell: 'earth',  access: 'auth',   titleKey: 'nav.workbench' }      // 登录可用
+meta: { shell: 'portal', access: 'perm', perm: 'system:user:list', ... }    // 授权才能管
+```
+
+- **不要在守卫里重定向**：需要登录/权限时由 `AccessGate` 就地引导，保留 URL 与上下文；
+  整站弹登录页是明确禁止的回归（`src/tests/access.test.js` 里有一份"必须 public 的路由清单"钉住它）。
+- **导航不隐藏入口**：侧栏（`router/nav.js`）与贴片导航对游客显示全部条目，只打 `需登录`/`需权限` 角标。
+- **能看 ≠ 能做**：页面可以 public，但里面的动作按需再判（例如案例中心可浏览，`一键复跑` 需登录）。
+
 ## 底图（矢量 + 栅格，可切换）
 
 地图页顶栏有底图切换器（也支持深链 `?basemap=`）：

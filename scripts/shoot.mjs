@@ -16,6 +16,7 @@ const base = args.base || 'http://127.0.0.1:3301';
 const path = args.path || '/';
 const out = args.out || '/tmp/shot.png';
 const [user, pass] = (args.login || 'admin:Admin@GeoNexus2026').split(':');
+const anon = args.anon === 'true';        // --anon：不登录，验证游客视角
 const port = Number(args.port || 9333);
 const chrome = args.chrome || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -24,14 +25,19 @@ const fs = await import('node:fs');
 const os = await import('node:os');
 const path_ = await import('node:path');
 
-// 1) 真登录拿令牌
-const loginRes = await fetch(`${base}/api/auth/login`, {
-  method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ userName: user, email: user, password: pass })
-});
-if (!loginRes.ok) { console.error(`登录失败 HTTP ${loginRes.status}`); process.exit(1); }
-const { token } = await loginRes.json();
-console.log(`  已登录：${user}（令牌 ${String(token).slice(0, 18)}…）`);
+// 1) 取令牌（--anon 时跳过，模拟游客）
+let token = null;
+if (anon) {
+  console.log('  游客模式（不注入令牌）');
+} else {
+  const loginRes = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userName: user, email: user, password: pass })
+  });
+  if (!loginRes.ok) { console.error(`登录失败 HTTP ${loginRes.status}`); process.exit(1); }
+  ({ token } = await loginRes.json());
+  console.log(`  已登录：${user}（令牌 ${String(token).slice(0, 18)}…）`);
+}
 
 // 2) 起 Chrome 并连 CDP
 const profile = fs.mkdtempSync(path_.join(os.tmpdir(), 'gnx-chrome-'));
@@ -64,7 +70,11 @@ try {
   // 3) 先在同源页面写入令牌，再导航到目标
   await cmd('Page.navigate', { url: `${base}/login` });
   await sleep(2500);
-  await cmd('Runtime.evaluate', { expression: `localStorage.setItem('gnx.token', ${JSON.stringify(token)})` });
+  await cmd('Runtime.evaluate', {
+    expression: token
+      ? `localStorage.setItem('gnx.token', ${JSON.stringify(token)})`
+      : 'localStorage.clear()'
+  });
   await cmd('Page.navigate', { url: `${base}${path}` });
   await sleep(Number(args.wait || 9000));
   const { data } = await cmd('Page.captureScreenshot', { format: 'png' });

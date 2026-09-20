@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import PortalLayout from '@/layouts/PortalLayout.vue'
 import EarthLayout from '@/layouts/EarthLayout.vue'
 import BlankLayout from '@/layouts/BlankLayout.vue'
+import AccessGate from '@/components/AccessGate.vue'
 
 const route = useRoute()
 // 会话还原由路由守卫在首次导航前完成（见 router/index.js），此处不再重复
@@ -17,8 +18,10 @@ watchEffect(() => { document.documentElement.dataset.shell = shell.value })
 
 <template>
   <component :is="layout">
-    <router-view v-slot="{ Component }">
-      <component :is="Component" />
-    </router-view>
+    <AccessGate>
+      <router-view v-slot="{ Component }">
+        <component :is="Component" />
+      </router-view>
+    </AccessGate>
   </component>
 </template>
