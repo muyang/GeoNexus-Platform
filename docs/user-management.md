@@ -247,7 +247,7 @@ GET  /api/me/audit           GET /api/me/applications
 | **Platform** | 自己签发 | 本地 | `sys_menu.perms` + 数据范围 |
 | **SDK**（GeoMCP / 执行面） | Platform | 服务 API Key（证明"是平台"）+ **用户 JWT 透传**（证明"代表谁"） | `scopes`（如 `oge:execute`） |
 | **GeoKG** | Platform | 读：白名单可匿名；写：JWT + `scopes`（`kg:write`） | 仅"知识运营"角色可写 |
-| **OGE-GeoNode** | Platform | 外壳校验 JWT / 服务令牌 + OPA 策略（数据主权） | 按主权级别（`sovereignty`）与授权关系 |
+| **OGE（独立系统）** | 不接平台令牌 | 平台用自己在 OGE 的**应用凭证**（`mogan_oge_credential`）换 `tk` 调其后端 API；OGE 侧只认识平台这个应用 | 按 OGE 侧主权级别（`sovereignty`）与授权关系；**用户级权限由平台自己兜** |
 
 ### 8.2 用户上下文透传格式（Java → Python）
 
@@ -264,7 +264,28 @@ GET  /api/me/audit           GET /api/me/applications
 **红线**：执行面**不得**用服务账号身份冒充用户。若请求没有 `_identity`，只能执行"公共资产 + 平台级"
 操作，且审计里标记为 `svc_*`；反过来，服务账号不能携带用户 `_identity` 提升自己的数据范围。
 
-### 8.3 审计（两处都要落，且可关联）
+### 8.3 与 OGE 账号域的关系（重要）
+
+OGE 是**独立系统**，有**自己的用户注册与登录**。因此存在**两个账号域**：
+
+| | 平台账号域 | OGE 账号域 |
+|---|---|---|
+| 权威 | Platform / RuoYi `sys_user` | OGE 自有注册系统 |
+| 服务对象 | 门户、莫干地球系统、后台的全部用户 | OGE 的直接用户（其他机构 / 公众直接上 OGE） |
+| 本平台如何使用 | 用户在这里注册登录 | **普通用户不需要 OGE 账号**：平台用应用凭证代表用户调用 OGE 后端能力 |
+
+**四条规则**：
+
+1. **不做账号联邦**：不用 OGE 账号登录本平台，也不用平台账号登录 OGE 前端——身份权威只能有一个。
+2. **凭证托管**：平台在 OGE 的应用凭证存 `mogan_oge_credential`（AES 加密），由执行面的
+   `OgeCredentialManager` 运行时换取 `tk` 并自动续期；前端与浏览器**永远拿不到** OGE 凭证。
+3. **记账在平台**：因为 OGE 侧只认识平台这个应用，**用量与配额必须由平台自己记**
+   （`mogan_quota` + `mogan_audit`），否则没法回答"这个算子是谁用的、用了多少"。
+4. **禁止影子账号**：若某单位确实需要在 OGE 侧独立开户（要直连 OGE 前端做管理），
+   由**平台管理员代理开户**并在 `mogan_oge_account_map` 登记映射；
+   **不允许用户自行注册**——平台视野外的账号既记不到账，也管不住权限回收。
+
+### 8.4 审计（两处都要落，且可关联）
 
 | 记录 | 位置 | 内容 |
 |---|---|---|
@@ -308,6 +329,7 @@ sequenceDiagram
 | `mogan_quota` | **新增** | 部门 / 用户配额与消耗 |
 | `mogan_approval` | **新增** | 审批单（发布 / 上架 / 提权） |
 | `mogan_asset_acl` | **可选** | 资产级显式授权（`private` 资产的授权名单） |
+| `mogan_oge_account_map` | **可选** | 平台用户 ↔ OGE 账号映射（仅代理开户时用，见 8.3） |
 
 > 新表沿用既有 `mogan_` 前缀（若依风格：系统表 `sys_`、业务表按模块前缀）。
 

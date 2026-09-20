@@ -89,7 +89,7 @@ def elbow(ax, pts, *, color="#9E9E9E", lw=1.5, ls=(0, (5, 2))):
                                  linewidth=lw, color=color, linestyle=ls, zorder=5))
 
 
-fig, ax = plt.subplots(figsize=(17.6, 13.8), dpi=170)
+fig, ax = plt.subplots(figsize=(17.6, 14.8), dpi=170)
 ax.set_xlim(0, 100)
 ax.set_ylim(0, 100)
 ax.axis("off")
@@ -161,43 +161,40 @@ arrow(ax, (57.0, 42.1), (60.0, 42.1), "", color="#8E5BA6", lw=2.4, style="=")
 ax.text(58.5, 42.1, "外挂（可插拔）", ha="center", va="center", fontsize=7.8,
         color="#8E5BA6", fontweight="bold", rotation=90)
 
-# ── ④ 资源节点层（GeoNode 抽象）──────────────────────────────────────────
-ax.text(LX, 26.6, "④ 资源与数据层（GeoNode 抽象 · 可扩展）",
-        fontsize=11, fontweight="bold", color="#1F4E79")
+# ── ④ 资源层：OGE 是独立系统 ─────────────────────────────────────────────
+ax.text(LX, 26.2, "④ 资源层：OGE 是**独立系统**（自有前后端与注册），本平台消费其后端能力"
+        .replace("**", ""), fontsize=11, fontweight="bold", color="#1F4E79")
 
-box(ax, LX, 15.4, 47.0, 9.8, "OGE-GeoNode（默认资源节点 · 存算资源服务）",
-    ["外壳（GeoNode 标准化封装）：本地 GeoCard 注册中心 · GeoMCP 端点 · OPA 策略门禁 · 审计",
-     "内核（OGE 原生，零改造）：GeoCube 时空立方体 · CubeRDD 弹性计算 · AI Cube 推理 · OGEScript",
-     "资源平台 7 项：1.首页（资源规模）· 2.数据中心 · 3.计算中心 · 4.AI中心（解译库/样本库）",
-     "             5.知识中心（节点本地知识库·检索问答）· 6.管理中心（资源/服务/开发）· 7.国产化适配"],
-    "ogenode", title_size=11.5, item_size=8.2, lw=2.2)
+box(ax, LX, 12.6, 56.5, 11.8, "OGE（独立系统 · 资源平台）",
+    ["前端：OGE 门户 / 控制台（用 OGE 自有账号登录）        ← 本平台不嵌入、不代理",
+     "账号：OGE 自有用户注册系统 —— 这就是 OGE 账号域，与本平台账号域相互独立",
+     "后端能力（本平台主要消费）：1.首页（资源规模）· 2.数据中心 · 3.计算中心 · 4.AI中心（解译库/样本库）",
+     "      5.知识中心（节点本地知识库·检索问答）· 6.管理中心（资源/服务/开发）· 7.国产化适配",
+     "      对外接口：OpenAPI（算法执行 / 任务轮询 / 结果下载）+ OGC API",
+     "两个账号域不做联邦：本平台用户无需在 OGE 注册，能力由平台代表用户调用并记账"],
+    "ogenode", title_size=12, item_size=8.3, lw=2.2)
 
-box(ax, 50.5, 15.4, 16.5, 9.8, "其他 GeoNode（未来接入）",
-    ["· 高校 / 机构自有节点",
-     "· 与 OGE 同构：自带注册中心",
-     "  与主权策略，经 GeoMCP 入联邦",
-     "· 平台不改代码，注册即可"],
-    "nodeN", title_size=10.5, item_size=8.0, dashed=True)
+box(ax, 60.0, 16.4, 26.0, 8.0, "接入桥接（本平台侧）",
+    ["· GeoNode 外壳：GeoCard 注册 · GeoMCP 端点 · OPA 策略 · 审计",
+     "· OGE Adapter：凭证托管 mogan_oge_credential（加密）→ 换 tk",
+     "· 平台代表用户调用并记账：配额与审计落在平台侧"],
+    "sdk", title_size=10.5, item_size=8.2)
 
-box(ax, 69.0, 15.4, 17.0, 9.8, "第三方 GeoNode（联邦）",
-    ["· 走 GeoMCP 协议接入",
-     "· 数据不动、计算移动",
-     "· 契约由 SDK 约束，实现自负",
-     "· 可叠加 GeoTrust 信誉评分"],
-    "nodeN", title_size=10.5, item_size=8.0, dashed=True)
+box(ax, 60.0, 13.2, 26.0, 2.6, "",
+    ["· 其他 / 第三方 GeoNode（未来接入）：经 GeoMCP 入联邦，平台不改代码即可注册"],
+    "nodeN", item_size=8.1, dashed=True)
 
-# ── ④b 数据供给：公共产品治理（计划表分项，3 项细分内容）──────────────────
-box(ax, LX, 8.4, RX - LX, 6.2, "公共产品治理（数据就绪 · 数据供给）",
+# ── ⑤ 数据供给与底座 ─────────────────────────────────────────────────────
+box(ax, LX, 5.6, 46.5, 6.0, "公共产品治理（数据就绪 · 数据供给）",
     ["· 1.地理信息数据治理（张楠）：全球影像 / 地形 / POI / 矢量切片    "
-     "· 2.公共产品数据治理（高镇）：地表 / 人口 / 医疗 / 教育 / 夜光遥感数据集",
-     "· 3.公共产品服务发布（张楠）：产出注册为 GeoCard（经平台目录）并落到节点存储，供门户「数据资源」与智能体调用"],
-    "front", title_size=11, item_size=8.2)
+     "· 2.公共产品数据治理（高镇）：地表 / 人口 / 医疗 / 教育 / 夜光数据集",
+     "· 3.公共产品服务发布（张楠）：产出注册为 GeoCard（经平台目录）并落到节点存储"],
+    "front", title_size=10.5, item_size=8.2)
 
-# ── ⑤ 底座 ───────────────────────────────────────────────────────────────
-box(ax, LX, 2.8, RX - LX, 4.8, "基础设施底座",
-    ["对象存储（栅格 / 矢量 / 成果）  ·  PostgreSQL + PostGIS / pgvector  ·  "
-     "图存储（gzip+NDJSON / Neo4j）  ·  K8s + GPU 集群 / 国产化算力"],
-    "infra", title_size=10.5, item_size=8.4, align="center")
+box(ax, 50.0, 5.6, 36.0, 6.0, "基础设施底座",
+    ["对象存储（栅格 / 矢量 / 成果）· PostgreSQL + PostGIS / pgvector",
+     "图存储（gzip+NDJSON / Neo4j）· K8s + GPU 集群 / 国产化算力"],
+    "infra", title_size=10.5, item_size=8.4)
 
 # ── 箭头（只连相邻层，互不穿越；标签全部落在层间空白带）──────────────────
 arrow(ax, (25.0, 86.8), (25.0, 85.9), "", color="#9E9E9E", lw=1.5, style="=")
@@ -207,33 +204,34 @@ arrow(ax, (20.0, 59.0), (20.0, 56.2), "调用 SDK 能力（契约 + 执行）",
       color="#2F8F4A", lw=2.0, ldx=17.0, lsize=8)
 arrow(ax, (47.0, 59.0), (47.0, 56.2), "JWT 校验（JWKS）",
       color="#E8A33D", lw=1.5, style="=", ldx=13.5, lsize=8)
-arrow(ax, (20.0, 28.6), (20.0, 25.4), "GeoMCP discover / describe / execute ＋ CAFE 下推",
-      color="#2F8F4A", lw=2.0, style="-", ldx=21.0, lsize=8)
-arrow(ax, (40.0, 28.6), (40.0, 25.4), "JWT / 服务令牌",
+arrow(ax, (20.0, 28.6), (20.0, 24.6), "GeoMCP ＋ OGE Adapter（凭证托管换 tk）",
+      color="#2F8F4A", lw=2.0, style="-", ldx=22.0, lsize=8)
+arrow(ax, (40.0, 28.6), (40.0, 24.6), "JWT / 服务令牌",
       color="#E8A33D", lw=1.5, style="=", ldx=20.0, lsize=8)
-arrow(ax, (20.0, 15.4), (20.0, 14.8), "", color="#9E9E9E", lw=1.5)
-arrow(ax, (25.0, 8.4), (25.0, 7.8), "数据供给", color="#4E79A7", lw=1.5, ldx=6.0, lsize=8)
+arrow(ax, (18.0, 12.2), (18.0, 11.8), "", color="#4E79A7", lw=1.5)
 
 # 右侧走廊：第三方直接接入大脑（绕开平台，不穿任何盒子）
 elbow(ax, [(86.0, 89.8), (95.0, 89.8), (95.0, 42.1), (86.2, 42.1)], color="#8E5BA6", lw=1.5)
 ax.text(90.8, 88.2, "第三方直接\n接入 GeoKG\n（不经平台）", ha="center", va="top",
         fontsize=7.6, color="#8E5BA6", linespacing=1.5)
 
-# 边界提示：两处"知识中心"不是一回事
-ax.text(LX, 1.2, "注：OGE「5.知识中心」是**节点本地**知识库与检索问答（随节点走）；"
-                 "GeoKG 是**全局领域知识图谱**（大脑，可独立/可外挂）。两者分层不同，不是同一份知识。"
-        .replace("**", ""),
+# 边界提示：两处"知识中心"不是一回事；两个账号域也不做联邦
+ax.text(LX, 3.9, "注 1：OGE「5.知识中心」是节点本地知识库与检索问答（随节点走）；"
+                 "GeoKG 是全局领域知识图谱（大脑）。两者分层不同，不是同一份知识。",
         fontsize=8.2, color="#8E5BA6", va="bottom")
+ax.text(LX, 2.1, "注 2：两个账号域相互独立、不做联邦 —— 本平台用户无需在 OGE 注册；"
+                 "若某单位需在 OGE 侧独立开户，由平台管理员代理开户并记录映射，禁止用户自行注册形成影子账号。",
+        fontsize=8.2, color="#C00000", va="bottom")
 
 # ── 图例 ─────────────────────────────────────────────────────────────────
 x0 = 2.0
 for style, color, label in [("-", "#2F8F4A", "SDK 契约 / 执行"), ("=", "#8E5BA6", "外挂（可插拔）"),
                             ("=", "#E8A33D", "身份令牌"), ("=", "#9E9E9E", "第三方接入"),
                             ("-", "#4E79A7", "平台内部调用")]:
-    ax.add_patch(FancyArrowPatch((x0, 0.2), (x0 + 3.0, 0.2), arrowstyle="-|>",
+    ax.add_patch(FancyArrowPatch((x0, 0.4), (x0 + 3.0, 0.4), arrowstyle="-|>",
                                  mutation_scale=11, linewidth=1.6, color=color,
                                  linestyle={"=": (0, (5, 2))}.get(style, "-"), zorder=5))
-    ax.text(x0 + 3.6, 0.2, label, fontsize=8.6, va="center", color="#333333")
+    ax.text(x0 + 3.6, 0.4, label, fontsize=8.6, va="center", color="#333333")
     x0 += 16.5
 
 fig.tight_layout(rect=(0.004, 0.004, 0.996, 0.996))
