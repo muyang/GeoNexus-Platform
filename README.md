@@ -308,6 +308,9 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 
 **一个入口，一个端口**：Node BFF 既提供前端产物，也按路径把请求分流到各后端。
 
+**地图默认是 3D 地球（Cesium）**，可在「后台管理 → 地图设置」切换为 2D 地图（MapLibre）、
+更换底图、切换 3D/2D 投影与默认视角（存后端 `settings`，`GET /api/settings` 公开可读）。
+
 **演示账号**（由 Java 侧种子初始化；`geonexus.identity.demo-accounts=false` 可整体关闭，生产必关）：
 
 | 账号 | 口令 | 角色 | 能做什么 |

@@ -1,4 +1,4 @@
-import { get, post } from './http'
+import { get, post, put } from './http'
 import { seedGeoCards, seedCases, seedFlows, seedKnowledge } from './seed'
 
 /** 身份：端点与既有 Node BFF 一致；换成 RuoYi 时只改这里。
@@ -102,6 +102,13 @@ export const knowledgeApi = {
     const q = new URLSearchParams({ q: query, limit: String(limit) })
     return get(`/api/geokg/search?${q.toString()}`)
   }
+}
+
+export const settingsApi = {
+  /** 站点设置：公开可读（前端要知道用哪个地图引擎）。 */
+  get: () => get('/api/settings'),
+  /** 修改需管理员权限（后台管理 · 地图设置）。 */
+  update: (patch) => put('/api/settings', patch)
 }
 
 export const systemApi = {

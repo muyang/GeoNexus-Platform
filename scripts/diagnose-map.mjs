@@ -68,12 +68,34 @@ try {
   await sleep(wait);
 
   const state = await evaluate(`(() => {
+    const g = window.__gnxGlobe;          // Cesium 3D 地球
+    if (g) {
+      const c = g.canvas;
+      const box = c ? c.getBoundingClientRect() : null;
+      let webgl = 'n/a';
+      try { const t = document.createElement('canvas'); webgl = !!(t.getContext('webgl2') || t.getContext('webgl')); } catch (e) { webgl = 'error:' + e.message; }
+      return {
+        engine: 'cesium',
+        hasGlobe: true,
+        canvas: c ? { w: Math.round(box.width), h: Math.round(box.height), attrW: c.width, attrH: c.height } : null,
+        webgl,
+        sceneMode: g.scene.mode,                       // 3 = SCENE3D, 2 = SCENE2D, 1 = MORPHING
+        imageryLayers: g.imageryLayers.length,
+        entities: g.entities.values.length,
+        tilesLoaded: g.scene.globe.tilesLoaded,
+        cameraHeight: Math.round(g.camera.positionCartographic.height),
+        containerSize: (() => { const el = document.querySelector('.earth-map'); return el ? { cw: el.clientWidth, ch: el.clientHeight } : null; })(),
+        dataMapLayers: document.documentElement.dataset.mapLayers || null,
+        shell: document.documentElement.dataset.shell
+      };
+    }
     const m = window.__gnxMap;
     const c = document.querySelector('.maplibregl-canvas');
     const box = c ? c.getBoundingClientRect() : null;
     let webgl = 'n/a';
     try { const t = document.createElement('canvas'); webgl = !!(t.getContext('webgl2') || t.getContext('webgl')); } catch (e) { webgl = 'error:' + e.message; }
     return {
+      engine: 'maplibre',
       hasMap: !!m,
       canvas: c ? { w: Math.round(box.width), h: Math.round(box.height), attrW: c.width, attrH: c.height } : null,
       canvasCount: document.querySelectorAll('canvas').length,
@@ -106,6 +128,11 @@ try {
     // 直接从 WebGL canvas 读像素（在 render 回调里读，避免 drawingBuffer 被清空）——
     // 这样即使 headless 不合成 WebGL，也能拿到"地图到底画出了什么"的真实证据。
     const dataUrl = await evaluate(`new Promise((resolve) => {
+      const g = window.__gnxGlobe;
+      if (g) {
+        try { g.render(); resolve(g.canvas.toDataURL('image/png')); } catch (e) { resolve('ERR:' + e.message); }
+        return;
+      }
       const m = window.__gnxMap;
       if (!m) return resolve(null);
       m.triggerRepaint();

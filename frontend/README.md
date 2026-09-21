@@ -35,6 +35,29 @@ meta: { shell: 'portal', access: 'perm', perm: 'system:user:list', ... }    // �
 - **导航不隐藏入口**：侧栏（`router/nav.js`）与贴片导航对游客显示全部条目，只打 `需登录`/`需权限` 角标。
 - **能看 ≠ 能做**：页面可以 public，但里面的动作按需再判（例如案例中心可浏览，`一键复跑` 需登录）。
 
+## 地图引擎：3D 地球（默认）与 2D 地图，可在后台切换
+
+`src/composables/map.js` 是**引擎门面**，后端实现分在 `src/composables/engines/`：
+
+| 引擎 | 实现 | 特点 |
+|---|---|---|
+| **Cesium（默认）** | `engines/cesium.js` | 真三维地球、大气层、天空盒；可扩地形与倾斜摄影。首次加载较重（约 1MB+） |
+| MapLibre | `engines/maplibre.js` | 轻量、支持矢量瓦片；弱终端/带宽受限时更稳 |
+
+页面只认门面这一套 API（`syncLayers / fit / setVisible / setOpacity / setBasemap …`），
+状态集中在门面里，因此**运行时可切换引擎**而不动任何页面代码。
+
+配置在**后台管理 → 地图设置**（存后端 `settings` 表，`GET /api/settings` 公开可读、`PUT` 需管理员）：
+`map.engine`（cesium/maplibre）、`map.basemap`、`map.projection`（3d/2d）、`map.showGeoCards`、`map.homeView`。
+默认值：**Cesium + 3D + 卫星影像**。保存后刷新页面生效。
+
+Cesium 的运行时资源（Workers/Assets/Widgets/ThirdParty，约 7.5MB）由
+`scripts/copy-cesium.mjs` 同步到 `public/cesium/`，由 `predev`/`prebuild` 钩子自动执行
+（`public/cesium/` 已 gitignore）；`index.html` 里设置 `window.CESIUM_BASE_URL`。
+
+> 两个引擎都是**异步**挂载的，页面可能在引擎就绪前就把数据送进来了 —— 所以两个后端在
+> `mount()` 结束时都会按 `state.layers` 补画一次（否则会出现"地球/地图上什么都没有"）。
+
 ## 底图（矢量 + 栅格，可切换）
 
 地图页顶栏有底图切换器（也支持深链 `?basemap=`）：

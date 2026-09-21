@@ -8,6 +8,10 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      // Cesium 在运行时通过这个全局变量找 Workers/Assets/Widgets（由 scripts/copy-cesium.mjs 同步到 public/cesium/）
+      window.CESIUM_BASE_URL = '/cesium/';
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

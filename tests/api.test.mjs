@@ -684,3 +684,49 @@ test('自助注册不能提权：请求体里的 roles/scopes 被忽略', async 
   assert.equal(r.data.user.isAdmin, false);
   assert.equal((await api('/api/admin/overview', { token: r.data.token })).status, 403, '拿不到管理端');
 });
+
+// ── 地图设置：默认 3D 地球，后台可配、公开可读 ───────────────────────────
+test('地图设置：默认 Cesium 3D 地球，公开可读', async () => {
+  const r = await api('/api/settings');
+  assert.equal(r.status, 200, '未登录也能读（前端要知道用哪个引擎）');
+  assert.equal(r.data['map.engine'], 'cesium', '默认 3D 地球');
+  assert.equal(r.data['map.projection'], '3d');
+  assert.equal(r.data['map.showGeoCards'], true);
+  assert.ok(r.data['map.homeView'].height > 0);
+});
+
+test('地图设置：只有管理员能改，且校验取值', async () => {
+  const memberT = await makeUser('cfg@test.local', ['org_member'], ['earth:view', 'card:read']);
+  // 非管理员不可写
+  assert.equal((await api('/api/settings', { method: 'PUT', token: memberT, body: { 'map.engine': 'maplibre' } })).status, 403);
+  assert.equal((await api('/api/settings', { method: 'PUT', body: { 'map.engine': 'maplibre' } })).status, 401);
+
+  // 非法值 422
+  assert.equal((await api('/api/settings', { method: 'PUT', token: adminToken, body: { 'map.engine': 'three' } })).status, 422);
+  assert.equal((await api('/api/settings', { method: 'PUT', token: adminToken, body: { 'map.projection': '4d' } })).status, 422);
+  assert.equal((await api('/api/settings', { method: 'PUT', token: adminToken, body: { 'nope.key': 1 } })).status, 422);
+
+  // 管理员改成 MapLibre 并写入，其它设置项保持不变
+  const upd = await api('/api/settings', { method: 'PUT', token: adminToken, body: {
+    'map.engine': 'maplibre', 'map.projection': '2d', 'map.basemap': 'dark-vector',
+    'map.showGeoCards': false, 'map.homeView': { lon: 100, lat: 20, height: 15000000 } } });
+  assert.equal(upd.status, 200);
+  assert.equal(upd.data['map.engine'], 'maplibre');
+  assert.equal(upd.data['map.projection'], '2d');
+  assert.equal(upd.data['map.showGeoCards'], false);
+  assert.equal(upd.data['map.homeView'].lon, 100);
+
+  // 公开读能反映改动（前端下次挂载即生效）
+  const pub = await api('/api/settings');
+  assert.equal(pub.data['map.engine'], 'maplibre');
+
+  // 改回默认，避免影响其它用例
+  await api('/api/settings', { method: 'PUT', token: adminToken, body: {
+    'map.engine': 'cesium', 'map.projection': '3d', 'map.basemap': 'satellite',
+    'map.showGeoCards': true, 'map.homeView': { lon: 110, lat: 30, height: 20000000 } } });
+  assert.equal((await api('/api/settings')).data['map.engine'], 'cesium');
+
+  // 写入留审计
+  const audit = await api('/api/admin/audit?limit=50', { token: adminToken });
+  assert.ok(audit.data.items.some((a) => a.action === 'settings.update'));
+});

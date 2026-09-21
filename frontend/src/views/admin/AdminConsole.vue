@@ -8,6 +8,7 @@ import AdminModules from './AdminModules.vue'
 import AdminApprovals from './AdminApprovals.vue'
 import AdminQuotas from './AdminQuotas.vue'
 import AdminAudit from './AdminAudit.vue'
+import AdminMapSettings from './AdminMapSettings.vue'
 
 const ui = useUiStore(); const auth = useAuthStore()
 const route = useRoute()
@@ -17,7 +18,8 @@ const tabs = [
   { id: 'modules', label: '九大模块内容' },
   { id: 'approvals', label: '审批' },
   { id: 'quotas', label: '配额' },
-  { id: 'audit', label: '审计' }
+  { id: 'audit', label: '审计' },
+  { id: 'map', label: '地图设置' }
 ]
 </script>
 
@@ -40,6 +42,7 @@ const tabs = [
       <AdminModules v-else-if="t.id === 'modules'" />
       <AdminApprovals v-else-if="t.id === 'approvals'" />
       <AdminQuotas v-else-if="t.id === 'quotas'" />
+      <AdminMapSettings v-else-if="t.id === 'map'" />
       <AdminAudit v-else />
     </el-tab-pane>
   </el-tabs>

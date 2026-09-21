@@ -15,25 +15,29 @@ function rasterStyle({ tiles, attribution, maxzoom = 19 }) {
   };
 }
 
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+/** rasterTiles 供 Cesium 使用（Cesium 原生不支持矢量瓦片，矢量底图会退到同色系栅格）。 */
 export const BASEMAPS = [
   {
     id: 'dark-vector', label: '深色矢量', raster: false,
-    style: import.meta.env.VITE_BASEMAP_DARK || 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+    style: import.meta.env.VITE_BASEMAP_DARK || 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    rasterTiles: carto('dark_all'), rasterAttribution: '© OpenStreetMap © CARTO'
   },
   {
     id: 'dark-raster', label: '深色栅格', raster: true,
-    style: rasterStyle({ tiles: carto('dark_all'), attribution: '© OpenStreetMap © CARTO' })
+    style: rasterStyle({ tiles: carto('dark_all'), attribution: '© OpenStreetMap © CARTO' }),
+    rasterTiles: carto('dark_all'), rasterAttribution: '© OpenStreetMap © CARTO'
   },
   {
     id: 'satellite', label: '卫星影像', raster: true,
-    style: rasterStyle({
-      tiles: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attribution: '© Esri, Maxar, Earthstar Geographics'
-    })
+    style: rasterStyle({ tiles: ESRI, attribution: '© Esri, Maxar, Earthstar Geographics' }),
+    rasterTiles: ESRI, rasterAttribution: '© Esri, Maxar, Earthstar Geographics'
   },
   {
     id: 'light-vector', label: '浅色矢量', raster: false,
-    style: import.meta.env.VITE_BASEMAP_LIGHT || 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
+    style: import.meta.env.VITE_BASEMAP_LIGHT || 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    rasterTiles: carto('light_all'), rasterAttribution: '© OpenStreetMap © CARTO'
   }
 ];
 

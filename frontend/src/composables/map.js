@@ -1,164 +1,108 @@
 import { ref, shallowRef } from 'vue'
-import maplibregl from 'maplibre-gl'
-import 'maplibre-gl/dist/maplibre-gl.css'
-import { getBasemap, DEFAULT_BASEMAP } from './basemaps'
+import { createMaplibreEngine } from './engines/maplibre'
+import { createCesiumEngine } from './engines/cesium'
+import { DEFAULT_BASEMAP } from './basemaps'
+import { settingsApi } from '@/api'
 
-/** 单例地图状态：EarthLayout 建图，任意页面通过 useMap() 驱动图层与视野。 */
-const map = shallowRef(null)
+/** 地球/地图的统一门面（facade）。
+ *
+ *  为什么要有这一层：地图引擎由**后台配置**（Cesium 3D 地球 / MapLibre 2D），
+ *  两个引擎的 API 不同但页面只该认一套（图层、缩放、底图、可见性…）。
+ *  状态集中在门面里，引擎实现只负责写这些 ref —— 因此可以在运行时切换引擎。
+ *
+ *  注意：地图与 3D 地球共用同一个容器，切换时先销毁旧引擎再挂新的。 */
+
+// ── 共享状态 ────────────────────────────────────────────────────────────────
+const engine = ref('cesium')
+const projection = ref('3d')
+const homeView = ref({ lon: 110, lat: 30, height: 20000000 })
+const showGeoCards = ref(true)
+const container = shallowRef(null)
+const settingsLoaded = ref(false)
+
+const map = shallowRef(null)          // MapLibre 实例（仅 maplibre 引擎使用）
 const ready = ref(false)
-const basemapFailed = ref(false)
 const loading = ref(false)
+const basemapFailed = ref(false)
+const slowBasemap = ref(false)
 const error = ref('')
 const tilestats = ref({ errors: 0, lastError: '' })
 const basemapId = ref(DEFAULT_BASEMAP)
-let loadTimer = null
-const BASEMAP_TIMEOUT_MS = 8000
-const layers = ref([])          // [{ id, title, kind, visible, opacity, bbox }]
+const layers = ref([])
 
-const EMPTY_STYLE = {
-  version: 8,
-  sources: {},
-  layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#04060d' } }]
+const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers }
+const engines = { maplibre: createMaplibreEngine(state), cesium: createCesiumEngine(state) }
+const active = () => engines[engine.value] || engines.cesium
+
+/** 读取后台配置（公开可读）。失败就沿用默认值，不影响浏览。 */
+async function loadSettings(force = false) {
+  if (settingsLoaded.value && !force) return
+  try {
+    const s = await settingsApi.get()
+    engine.value = s['map.engine'] || 'cesium'
+    basemapId.value = s['map.basemap'] || DEFAULT_BASEMAP
+    projection.value = s['map.projection'] || '3d'
+    homeView.value = s['map.homeView'] || homeView.value
+    showGeoCards.value = s['map.showGeoCards'] !== false
+  } catch { /* 后端不可达：用默认（Cesium 3D 地球 + 卫星影像） */ }
+  settingsLoaded.value = true
 }
 
 export function useMap() {
-  function mount(container, styleUrl, id = DEFAULT_BASEMAP) {
-    basemapId.value = id
-    if (!container) return map.value
-    // 无 WebGL 时不要静默黑屏：明确告知，且目录/图层列表照常可用
-    if (typeof maplibregl.supported === 'function' && !maplibregl.supported()) {
-      basemapFailed.value = true
-      loading.value = false
-      error.value = '当前浏览器或环境不支持 WebGL，地图底图无法渲染（右侧图层与目录仍可用）'
-      return null
-    }
-    // 门户↔地球系统切换会换掉容器：旧实例挂在一个已卸载的 DOM 上，必须销毁重建
-    if (map.value && !map.value.getContainer()?.isConnected) {
-      try { map.value.remove() } catch { /* 已不可用 */ }
-      map.value = null; ready.value = false; layers.value = []
-    }
-    if (map.value) return map.value
-    map.value = new maplibregl.Map({
-      container,
-      style: styleUrl,
-      center: [110, 30],
-      zoom: 2.2,
-      attributionControl: { compact: true }
+  async function mount(el, opts = {}) {
+    await loadSettings()
+    container.value = el
+    if (!el) return false
+    engines.maplibre.destroy()
+    engines.cesium.destroy()
+    ready.value = false; slowBasemap.value = false; basemapFailed.value = false; error.value = ''
+    return active().mount(el, {
+      basemap: basemapId.value,
+      projection: projection.value,
+      homeView: homeView.value,
+      ...opts
     })
-    loading.value = true
-    // 诊断句柄：排障脚本与浏览器控制台可直接查看地图内部状态（只读，勿依赖）
-    if (typeof window !== 'undefined') window.__gnxMap = map.value
-    map.value.on('load', () => {
-      ready.value = true; loading.value = false; basemapFailed.value = false
-      if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
-    })
-    // 弱网/离线：底图不能在限时内就绪时给出明确提示，并切到本地空样式，
-    // 让 GeoCard 图层继续可见 —— 而不是让用户盯着一块黑屏。
-    if (loadTimer) clearTimeout(loadTimer)
-    loadTimer = setTimeout(() => {
-      if (ready.value) return
-      loading.value = false; basemapFailed.value = true
-      error.value = `底图 ${BASEMAP_TIMEOUT_MS / 1000}s 内未加载完成（网络或瓦片服务不可达）`
-      try { map.value?.setStyle(EMPTY_STYLE) } catch { /* 忽略 */ }
-    }, BASEMAP_TIMEOUT_MS)
-    // 在线底图不可用时降级到本地空样式：地图仍可承载 GeoCard 图层，并明确提示
-    // 瓦片/源级错误单独计数：矢量底图偶发缺瓦片不应整体判死，只有源不可用才切兜底
-    map.value.on('error', (e) => {
-      const msg = e?.error?.message || '底图错误'
-      tilestats.value = { errors: tilestats.value.errors + 1, lastError: msg }
-      const fatal = /style|sprite|glyphs|source|Failed to fetch|NetworkError|AbortError/i.test(msg) && !ready.value
-      error.value = msg
-      if (fatal && !basemapFailed.value) {
-        basemapFailed.value = true
-        try { map.value.setStyle(EMPTY_STYLE) } catch { /* 忽略 */ }
-      }
-    })
-    return map.value
   }
 
-  function bboxToCoords(bbox) {
-    return [[bbox[0], bbox[1]], [bbox[2], bbox[3]]]
+  async function setEngine(name) {
+    if (!engines[name] || name === engine.value) return
+    engines.maplibre.destroy()
+    engines.cesium.destroy()
+    engine.value = name
+    ready.value = false; error.value = ''
+    layers.value = []
+    if (container.value) await active().mount(container.value, { basemap: basemapId.value, projection: projection.value, homeView: homeView.value })
   }
 
-  /** 用 GeoCard 的 bbox 画覆盖框：这是"目录 → 地图"的最短闭环。 */
-  function syncLayers(cards) {
-    const m = map.value
-    layers.value = (cards || [])
-      .filter((c) => Array.isArray(c.bbox) && c.bbox.length === 4)
-      .map((c) => ({ id: c.id, title: c.title || c.id, kind: c.type || 'data', bbox: c.bbox, visible: true, opacity: 0.35 }))
-    if (!m) return
-    const draw = () => {
-      for (const l of layers.value) {
-        const srcId = `src-${l.id}`; const layerId = `lyr-${l.id}`
-        if (!m.getSource(srcId)) {
-          m.addSource(srcId, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [bboxToCoords(l.bbox).concat([bboxToCoords(l.bbox)[0]])] }, properties: {} } })
-          m.addLayer({ id: layerId, type: 'fill', source: srcId,
-            paint: { 'fill-color': colorFor(l.kind), 'fill-opacity': l.opacity, 'fill-outline-color': colorFor(l.kind) } })
-        }
-      }
-    }
-    if (m.isStyleLoaded()) draw(); else m.once('idle', draw)
-    // 诊断信号：DOM 上可断言"图层真的加进去了"，不依赖截图（headless 不合成 WebGL）
-    document.documentElement.dataset.mapLayers = String(layers.value.length)
-  }
-
-  function setVisible(id, visible) {
-    const l = layers.value.find((x) => x.id === id); if (!l) return
-    l.visible = visible
-    const m = map.value
-    if (m && m.getLayer(`lyr-${id}`)) m.setLayoutProperty(`lyr-${id}`, 'visibility', visible ? 'visible' : 'none')
-  }
-
-  function setOpacity(id, opacity) {
-    const l = layers.value.find((x) => x.id === id); if (!l) return
-    l.opacity = opacity
-    const m = map.value
-    if (m && m.getLayer(`lyr-${id}`)) m.setPaintProperty(`lyr-${id}`, 'fill-opacity', opacity)
-  }
-
-  /** 缩放到全部图层：即使底图空白，用户也能立刻看到数据落在哪里。 */
-  function fitAll() {
-    const boxes = layers.value.map((l) => l.bbox).filter((b) => Array.isArray(b) && b.length === 4)
-    if (!boxes.length) return
-    const merged = boxes.reduce((acc, b) => [
-      Math.min(acc[0], b[0]), Math.min(acc[1], b[1]), Math.max(acc[2], b[2]), Math.max(acc[3], b[3])
-    ], boxes[0])
-    fit(merged)
-  }
-
-  function fit(bbox) {
-    const m = map.value
-    if (!m || !Array.isArray(bbox) || bbox.length !== 4) return
-    m.fitBounds(bboxToCoords(bbox), { padding: 80, duration: 600 })
-  }
-
-  function colorFor(kind) {
-    return ({ data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90' })[kind] || '#8fd3ff'
-  }
-
-  /** 切换底图：只换 style，不重建地图，也不影响 GeoCard 图层。 */
-  function setBasemap(id) {
-    const bm = getBasemap(id)
-    basemapId.value = bm.id
-    const m = map.value
-    if (!m) return
-    ready.value = false; loading.value = true; basemapFailed.value = false; error.value = ''
-    tilestats.value = { errors: 0, lastError: '' }
-    try { m.setStyle(bm.style) } catch (e) { error.value = e.message }
-    if (loadTimer) clearTimeout(loadTimer)
-    loadTimer = setTimeout(() => {
-      if (ready.value) return
-      loading.value = false; basemapFailed.value = true
-      error.value = `${bm.label} 底图 ${BASEMAP_TIMEOUT_MS / 1000}s 内未就绪`
-      try { map.value?.setStyle(EMPTY_STYLE) } catch { /* 忽略 */ }
-    }, BASEMAP_TIMEOUT_MS)
+  function setProjection(p) {
+    projection.value = p === '2d' ? '2d' : '3d'
+    active().setProjection(projection.value)
   }
 
   function destroy() {
-    if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
-    if (map.value) { try { map.value.remove() } catch { /* 忽略 */ } }
-    map.value = null; ready.value = false; loading.value = false; layers.value = []
+    engines.maplibre.destroy()
+    engines.cesium.destroy()
+    layers.value = []
   }
 
-  return { map, ready, loading, basemapFailed, error, tilestats, basemapId, layers, mount, destroy, setBasemap, syncLayers, setVisible, setOpacity, fit, fitAll, colorFor }
+  /** 图层同步：引擎挂载可能晚于数据到达，所以统一走 active() 并容错。 */
+  function syncLayers(cards) {
+    if (!showGeoCards.value) { layers.value = []; return }
+    active().syncLayers(cards)
+  }
+
+  return {
+    // 状态
+    engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards,
+    // 动作
+    mount, destroy, setEngine, setProjection, loadSettings,
+    syncLayers,
+    setVisible: (id, v) => active().setVisible(id, v),
+    setOpacity: (id, o) => active().setOpacity(id, o),
+    fit: (b) => active().fit(b),
+    fitAll: () => active().fitAll(),
+    setBasemap: (id) => active().setBasemap(id),
+    retryBasemap: () => active().retryBasemap(),
+    colorFor: (k) => active().colorFor(k)
+  }
 }
