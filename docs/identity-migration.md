@@ -28,6 +28,10 @@
 | 权限解析 | `identity/service/PermissionService.java` | `scopes` = 角色可见菜单的 `perms` 并集（与 RuoYi 按钮级权限同源）；`data_scope` 1–5 解析 |
 | 种子 | `identity/seed/IdentitySeeder.java` | 部门树 6（含"公众用户"独立根部门）/ 角色 7 / 菜单 22 / 管理员 |
 
+**种子账号**：管理员 `admin`（`geonexus.identity.admin-*`）+ 演示矩阵 `visitor` / `member` / `operator`
+（统一口令 `geonexus.identity.demo-password`，`demo-accounts=false` 可整体关闭）。四者角色与 scopes 各不相同，
+`IdentityApiTest` 逐条钉住（例如 `visitor` 没有 `workbench:run`，`member` 有但进不了管理端）。
+
 **管理员从哪来**：`IdentitySeeder` 用 `geonexus.identity.admin-user-name|admin-password`
 （默认 `admin` / `Admin@GeoNexus2026`）建第一个管理员。公众自助注册只得到
 `roles=['public_visitor']`、`scopes=['earth:view','card:read','case:read']` —— **注册 ≠ 授权**。
@@ -46,6 +50,10 @@
 - claim → 内部用户形状（`roles`/`scopes`/`isAdmin`），与既有权限判定无缝衔接
 
 `getAuthUser` 的判定顺序：`gnx_…` 会话令牌（历史兼容）→ 否则按 JWT 验签。
+
+**轮换对用户透明**：Java 重启会换 RSA 密钥对。遇到本地没有的 `kid` 时，把请求**前置**成"先刷新 JWKS 再判定"
+（`preflightIdentity`），而不是先拒绝再后台重取 —— 否则第一笔业务调用会 401，前端会莫名把用户登出
+（实测踩到，已修并有回归测试）。
 
 ---
 

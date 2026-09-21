@@ -139,11 +139,21 @@ function startPlatform({ registryUrl, adminEmails, sdkWebUrl, artifactRoots, jwk
     child.stdout.on('data', (d) => {
       out += d.toString();
       const m = out.match(/running at http:\/\/localhost:(\d+)/);
-      if (m) { clearTimeout(timer); resolve({ child, port: Number(m[1]) }); }
+      if (m) { clearTimeout(timer); resolve({ child, port: Number(m[1]), dataDir: tmpDir }); }
     });
     child.stderr.on('data', (d) => { out += d.toString(); });
     child.on('exit', (code) => { if (code) reject(new Error(`平台服务退出 code=${code}: ${out}`)); });
   });
+}
+
+const { DatabaseSync } = await import('node:sqlite');
+
+/** 测试用提权：直接改测试自己拥有的 SQLite（不是生产后门——register 已不采信 roles/scopes）。 */
+function grant(email, roles, scopes, dataDir) {
+  const db = new DatabaseSync(path.join(dataDir, 'geonexus.db'));
+  db.prepare('UPDATE users SET roles = ?, scopes = ? WHERE email = ?')
+    .run(JSON.stringify(roles), JSON.stringify(scopes), String(email).toLowerCase());
+  db.close();
 }
 
 async function api(path, { method = 'GET', body, token } = {}) {
@@ -518,14 +528,18 @@ function startFakeJwks() {
     }
     res.writeHead(404); res.end('{}');
   });
+  let previousPrivateKey = null;
   const rotate = () => {   // 模拟 Java 侧重启/轮换密钥
+    previousPrivateKey = privateKey;
     ({ publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }));
     jwk = publicKey.export({ format: 'jwk' });
     kid = `test-kid-${Date.now()}`;
     return kid;
   };
   return new Promise((resolve) => server.listen(0, '127.0.0.1',
-    () => resolve({ server, port: server.address().port, sign, rotate, currentKid: () => kid })));
+    () => resolve({ server, port: server.address().port, sign, rotate,
+      stalePrivateKey: () => previousPrivateKey,
+      currentKid: () => kid })));
 }
 
 let jwks;
@@ -599,14 +613,74 @@ test('身份迁 Java：公钥轮换后，BFF 会自动重取 JWKS 并接受新 k
 
     const newKid = jwks2.rotate();                       // Java 侧换密钥
     const after = jwks2.sign(claimsFor());               // 用新私钥签，kid 也变了
+    // 前置刷新：遇到未知 kid 时先补公钥再判定，因此**首次请求就应成功**（轮换对用户透明）。
+    // 早期实现是"先拒绝再后台重取"，会让前端在 Java 重启后莫名被登出——已修。
     const first = await fetch(`${b2}/api/admin/overview`, { headers: { authorization: `Bearer ${after}` } });
-    assert.equal(first.status, 401, '首次遇到未知 kid 会拒绝，并触发后台重取');
+    assert.equal(first.status, 200, `新 kid=${newKid} 的令牌应被直接接受（前置刷新）`);
 
-    await new Promise((r) => setTimeout(r, 500));        // 等重取完成
-    const second = await fetch(`${b2}/api/admin/overview`, { headers: { authorization: `Bearer ${after}` } });
-    assert.equal(second.status, 200, `重取 JWKS 后应接受新 kid=${newKid} 的令牌`);
+    // 旧 kid 的令牌（旧私钥签）在轮换后必须被拒：公钥已换，签名验不过
+    const stale = jwks2.sign(claimsFor(), { key: jwks2.stalePrivateKey() });
+    assert.equal((await fetch(`${b2}/api/admin/overview`, { headers: { authorization: `Bearer ${stale}` } })).status, 401);
   } finally {
     jwks2.server.close();
     p2.child.kill();
   }
+});
+
+// ── 权限收紧：审批与配额不是"登录就能看" ────────────────────────────────
+async function makeUser(email, roles, scopes) {
+  const r = await api('/api/auth/register', { method: 'POST',
+    body: { name: email.split('@')[0], email, password: 'pw-1234567890' } });
+  if (roles) grant(email, roles, scopes, platform.dataDir);
+  const t = r.data.token;
+  // 提权后重新登录，让令牌里的 claims 反映新角色
+  if (roles) return (await api('/api/auth/login', { method: 'POST', body: { email, password: 'pw-1234567890' } })).data.token;
+  return t;
+}
+
+test('审批列表需要 approval:list：公众 403，有该 scope 的角色 200', async () => {
+  const operatorT = await makeUser('op@test.local', ['platform_operator'], ['approval:list', 'quota:read']);
+  const memberT = await makeUser('mem@test.local', ['org_member'], ['earth:view', 'card:read']);
+  const visitorT = await makeUser('vis@test.local', null, null);   // 默认公众访客
+
+  assert.equal((await api('/api/approvals', { token: adminToken })).status, 200);
+  assert.equal((await api('/api/approvals', { token: operatorT })).status, 200, '平台运营有 approval:list');
+  assert.equal((await api('/api/approvals', { token: memberT })).status, 403);
+  assert.equal((await api('/api/approvals', { token: visitorT })).status, 403, '公众访客不得看全量审批');
+  assert.equal((await api('/api/approvals')).status, 401, '未登录 401');
+
+  // 自己的申请：登录即可看，且只包含自己提交的
+  assert.equal((await api('/api/approvals/mine', { token: visitorT })).status, 200);
+});
+
+test('配额：无 quota:read 只能看自己的；不能替别人扣减', async () => {
+  const memberEmail = 'quota-member@test.local';
+  const memberT = await makeUser(memberEmail, ['org_member'], ['earth:view', 'card:read']);
+
+  await api('/api/quotas', { method: 'POST', token: adminToken, body: { scope: 'dept', subject: 'dept-x', limit: 100 } });
+  await api('/api/quotas', { method: 'POST', token: adminToken, body: { scope: 'user', subject: memberEmail, limit: 20 } });
+
+  const all = await api('/api/quotas', { token: adminToken });
+  assert.equal(all.data.all, true);
+  assert.ok(all.data.count >= 2);
+
+  const own = await api('/api/quotas', { token: memberT });
+  assert.equal(own.data.all, false, '无 quota:read → 只返回自己的');
+  assert.ok(own.data.items.every((q) => q.scope === 'user' && q.subject === memberEmail));
+
+  assert.equal((await api('/api/quotas/consume', { method: 'POST', token: memberT,
+    body: { subject: 'someone-else@x', dept: 'dept-x', amount: 1 } })).status, 403, '不能替别人扣减');
+  assert.equal((await api('/api/quotas/consume', { method: 'POST', token: memberT,
+    body: { subject: memberEmail, amount: 3 } })).status, 200);
+});
+
+test('自助注册不能提权：请求体里的 roles/scopes 被忽略', async () => {
+  const r = await api('/api/auth/register', { method: 'POST', body: {
+    name: '想当管理员的人', email: 'escalate@test.local', password: 'pw-1234567890',
+    roles: ['platform_admin'], scopes: ['*'] } });
+  assert.equal(r.status, 201);
+  assert.deepEqual(r.data.user.roles, ['public_visitor'], '角色必须由服务端赋默认值');
+  assert.ok(!r.data.user.scopes.includes('*'));
+  assert.equal(r.data.user.isAdmin, false);
+  assert.equal((await api('/api/admin/overview', { token: r.data.token })).status, 403, '拿不到管理端');
 });

@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/ui'
 
 const auth = useAuthStore(); const ui = useUiStore(); const route = useRoute(); const router = useRouter()
 const email = ref(''); const password = ref(''); const error = ref(''); const busy = ref(false)
+const isDev = import.meta.env.DEV
 
 async function submit() {
   error.value = ''; busy.value = true
@@ -26,6 +27,14 @@ async function submit() {
     <p v-if="error" class="error">{{ error }}</p>
     <button class="btn primary" type="submit" :disabled="busy">{{ busy ? ui.t('common.loading') : ui.t('auth.login') }}</button>
     <RouterLink class="link" :to="{ name: 'register' }">{{ ui.t('auth.toRegister') }}</RouterLink>
+    <div v-if="isDev" class="demo">
+      <p class="dim">演示账号（仅开发期）：</p>
+      <ul>
+        <li><b>admin</b> / Admin@GeoNexus2026 — 平台管理员</li>
+        <li><b>member</b> / Demo@GeoNexus2026 — 机构成员（可用工作台）</li>
+        <li><b>visitor</b> / Demo@GeoNexus2026 — 公众访客（只能看）</li>
+      </ul>
+    </div>
   </form>
 </template>
 
@@ -38,4 +47,7 @@ async function submit() {
 .btn.primary { background: var(--p-cyan); border-color: var(--p-cyan); color: #fff; font-weight: 600; }
 .error { color: #b91c1c; font-size: 13px; margin: 0; }
 .link { font-size: 13px; color: var(--p-cyan-strong); }
+.demo { border-top: 1px dashed var(--p-line); padding-top: 10px; font-size: 12px; }
+.demo p { margin: 0 0 4px; }
+.demo ul { margin: 0; padding-left: 16px; line-height: 1.7; }
 </style>

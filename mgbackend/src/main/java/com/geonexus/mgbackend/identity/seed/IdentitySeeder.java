@@ -120,25 +120,45 @@ public class IdentitySeeder implements ApplicationRunner {
         // 自定义数据范围示例：机构成员(3002 是 3 本部门)不演示；给"平台运营"挂一个自定义部门集
         relationMapper.bindRoleDept(3005L, 1002L);
 
-        // ── 引导管理员 ──────────────────────────────────────────
-        SysUser admin = new SysUser();
-        admin.setUserId(4001L);
-        admin.setDeptId(1000L);
-        admin.setUserName(props.getAdminUserName());
-        admin.setNickName("平台管理员");
-        admin.setUserType("staff");
-        admin.setEmail("admin@geonexus.local");
-        admin.setPassword(encoder.encode(props.getAdminPassword()));
-        admin.setStatus("0");
-        admin.setDelFlag("0");
-        admin.setTenantId("GeoNexus");
-        admin.setCreateTime(now);
-        admin.setUpdateTime(now);
-        userMapper.insert(admin);
-        relationMapper.bindUserRole(4001L, 3006L);
+        // ── 账号：引导管理员 + 演示账号 ─────────────────────────
+        user(4001L, 1000L, props.getAdminUserName(), "平台管理员", "admin@geonexus.local",
+                props.getAdminPassword(), "staff", "GeoNexus", now, 3006L);
 
-        log.warn("身份种子已初始化：部门 6 / 角色 7 / 菜单 {} / 管理员 {}（初始密码请立即修改）",
-                menus.size(), props.getAdminUserName());
+        if (props.isDemoAccounts()) {
+            // 演示矩阵：一个只看、一个能用工作台、一个能管审批/配额。
+            // 口令统一取 geonexus.identity.demo-password；生产请设 demo-accounts=false。
+            final String demoPw = props.getDemoPassword();
+            user(4002L, 1001L, "visitor", "公众访客（演示）", "visitor@geonexus.local",
+                    demoPw, "public", props.getPublicDeptName(), now, 3001L);
+            user(4003L, 1003L, "member", "机构成员（演示）", "member@geonexus.local",
+                    demoPw, "staff", "攻坚团队", now, 3002L);
+            user(4004L, 1002L, "operator", "平台运营（演示）", "operator@geonexus.local",
+                    demoPw, "staff", "GeoNexus", now, 3005L);
+        }
+
+        log.warn("身份种子已初始化：部门 6 / 角色 7 / 菜单 {} / 账号 {}（管理员 {}，演示账号 {}）—— 口令请在上线前全部更换",
+                menus.size(), props.isDemoAccounts() ? 4 : 1, props.getAdminUserName(),
+                props.isDemoAccounts() ? "visitor / member / operator" : "未启用");
+    }
+
+    /** 建账号并绑定角色（种子专用，口令一律加密存储）。 */
+    private void user(Long id, Long deptId, String userName, String nickName, String email,
+                      String rawPassword, String userType, String tenant, LocalDateTime now, Long roleId) {
+        SysUser u = new SysUser();
+        u.setUserId(id);
+        u.setDeptId(deptId);
+        u.setUserName(userName);
+        u.setNickName(nickName);
+        u.setUserType(userType);
+        u.setEmail(email);
+        u.setPassword(encoder.encode(rawPassword));
+        u.setStatus("0");
+        u.setDelFlag("0");
+        u.setTenantId(tenant);
+        u.setCreateTime(now);
+        u.setUpdateTime(now);
+        userMapper.insert(u);
+        if (roleId != null) relationMapper.bindUserRole(id, roleId);
     }
 
     private void dept(Long id, Long parent, String ancestors, String name, int order, LocalDateTime now) {

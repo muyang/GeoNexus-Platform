@@ -67,31 +67,43 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     /** 仅开发期演示入口（生产构建里 DEV 为 false，不会带上）。
-     *  优先用真实后端注册/登录 demo 账号 —— 这样演示态的权限是真的、可审计的；
-     *  后端不可达时才退回纯离线身份，并在界面标注。 */
-    async applyDemoSession(asAdmin = false) {
-      // ?demo=admin：用 Java/RuoYi 侧种子管理员真实登录（身份权威在 Java）；
-      // ?demo=1：用公众演示账号，先注册后登录
-      const email = asAdmin ? (import.meta.env.VITE_DEMO_ADMIN_EMAIL || 'admin') : 'demo@local'
-      const password = asAdmin ? (import.meta.env.VITE_DEMO_ADMIN_PASSWORD || 'Admin@GeoNexus2026') : 'demo-password-123'
-      if (asAdmin) {
-        try { await this.login(email, password); return } catch { /* 落回离线身份 */ }
-      }
-      try {
-        try {
-          await this.login(email, password)
-        } catch {
-          await this.register({ name: '演示账号', email, password, org: 'GeoNexus · 演示' })
+     *
+     *  账号由 Java 侧 IdentitySeeder 种下（见 docs/identity-deployment 说明）：
+     *    admin    平台管理员   Admin@GeoNexus2026
+     *    member   机构成员     Demo@GeoNexus2026   ← 能用智能工作台
+     *    visitor  公众访客     Demo@GeoNexus2026   ← 只能看
+     *  口令可用 VITE_DEMO_* 覆盖；Java 不可达时退回离线身份（仅用于看界面）。 */
+    async applyDemoSession(which = 'member') {
+      const key = String(which) === '1' ? 'member' : String(which)
+      const accounts = {
+        admin: {
+          user: import.meta.env.VITE_DEMO_ADMIN_EMAIL || 'admin',
+          password: import.meta.env.VITE_DEMO_ADMIN_PASSWORD || 'Admin@GeoNexus2026',
+          offline: { name: '管理员（离线）', roles: ['platform_admin'], scopes: ['*'] }
+        },
+        member: {
+          user: 'member', password: import.meta.env.VITE_DEMO_PASSWORD || 'Demo@GeoNexus2026',
+          offline: { name: '机构成员（离线）', roles: ['org_member'], scopes: ['earth:view', 'card:read', 'case:read', 'workbench:run'] }
+        },
+        visitor: {
+          user: 'visitor', password: import.meta.env.VITE_DEMO_PASSWORD || 'Demo@GeoNexus2026',
+          offline: { name: '公众访客（离线）', roles: ['public_visitor'], scopes: ['earth:view', 'card:read', 'case:read'] }
         }
+      }
+      const acc = accounts[key] || accounts.member
+      try {
+        await this.login(acc.user, acc.password)
       } catch {
+        // 后端不可达：给一个只能看的离线身份，界面上会标注"离线"
         this.apply({
           token: 'demo-session-offline',
-          user: { id: 'demo', name: '演示账号（离线）', email, org: 'GeoNexus · 离线演示', offline: true },
-          roles: ['platform_admin'],
-          scopes: ['*']
+          user: { id: 'demo', name: acc.offline.name, email: `${acc.user}@local`, org: 'GeoNexus · 离线演示', offline: true },
+          roles: acc.offline.roles,
+          scopes: acc.offline.scopes
         })
       }
     },
+
     logout() {
       this.token = ''
       this.user = null

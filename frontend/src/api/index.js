@@ -75,13 +75,32 @@ export const workbenchApi = {
 }
 
 export const knowledgeApi = {
-  async graph(level = 'country') {
+  /** 概览用 /health：给数据版本与图规模。**不要**用 /graph 当概览——
+   *  GeoKG 的 /graph 要求 focus 是必填（没有"按层级列全图"这种模式，传 level 会 422，实测踩过）。 */
+  async health() {
     try {
-      const data = await get(`/api/geokg/graph?level=${encodeURIComponent(level)}`)
+      const data = await get('/api/geokg/health')
+      return { health: data, source: 'GeoKG', degraded: false }
+    } catch (err) {
+      return { health: null, source: 'GeoKG · 离线', degraded: true, error: err.message }
+    }
+  },
+
+  /** 以某实体为中心的子图（图谱视图）。focus 必填：先用 /search 查 id。 */
+  async graph(focus, { depth = 2, direction = 'both', limit = 200 } = {}) {
+    if (!focus) throw new Error('knowledgeApi.graph 需要 focus（先用 /search 查实体 id）')
+    const q = new URLSearchParams({ focus, depth: String(depth), direction, limit: String(limit) })
+    try {
+      const data = await get(`/api/geokg/graph?${q.toString()}`)
       return { graph: data, source: 'GeoKG', degraded: false }
     } catch (err) {
       return { graph: seedKnowledge, source: 'GeoKG · 离线', degraded: true, error: err.message }
     }
+  },
+
+  async search(query, limit = 10) {
+    const q = new URLSearchParams({ q: query, limit: String(limit) })
+    return get(`/api/geokg/search?${q.toString()}`)
   }
 }
 

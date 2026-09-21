@@ -179,6 +179,45 @@ class IdentityApiTest {
     }
 
     @Test
+    void 演示账号与管理员账号可用_且权限各不相同() throws Exception {
+        // 管理员：通配 scope，可进管理端
+        String admin = postJson("/api/auth/login",
+                body(Map.of("userName", "admin", "password", "Admin@GeoNexus2026")), null, 200)
+                .get("token").asText();
+        assertThat(getJson("/api/system/users", admin, 200).get("count").asInt()).isGreaterThanOrEqualTo(4);
+
+        // 公众访客：能看，不能跑工作台
+        JsonNode visitor = postJson("/api/auth/login",
+                body(Map.of("userName", "visitor", "password", "Demo@GeoNexus2026")), null, 200).get("user");
+        assertThat(visitor.get("roles").toString()).contains("public_visitor");
+        assertThat(visitor.get("scopes").toString()).contains("card:read");
+        assertThat(visitor.get("scopes").toString()).doesNotContain("workbench:run");
+        assertThat(visitor.get("isAdmin").asBoolean()).isFalse();
+
+        // 机构成员：能用工作台（业务面的 auth 档）
+        JsonNode member = postJson("/api/auth/login",
+                body(Map.of("userName", "member", "password", "Demo@GeoNexus2026")), null, 200).get("user");
+        assertThat(member.get("roles").toString()).contains("org_member");
+        assertThat(member.get("scopes").toString()).contains("workbench:run");
+        assertThat(getJson("/api/system/users", postJson("/api/auth/login",
+                body(Map.of("userName", "member", "password", "Demo@GeoNexus2026")), null, 200)
+                .get("token").asText(), 403).get("error").asText()).contains("system:user:list");
+
+        // 平台运营：能看审批与配额，但没有系统管理
+        JsonNode operator = postJson("/api/auth/login",
+                body(Map.of("userName", "operator", "password", "Demo@GeoNexus2026")), null, 200).get("user");
+        assertThat(operator.get("roles").toString()).contains("platform_operator");
+        assertThat(operator.get("scopes").toString()).contains("approval:list").contains("quota:read");
+        assertThat(operator.get("scopes").toString()).doesNotContain("system:user:list");
+
+        // 数据范围也各不相同：管理员=全部，成员=本部门
+        String memberToken = postJson("/api/auth/login",
+                body(Map.of("userName", "member", "password", "Demo@GeoNexus2026")), null, 200).get("token").asText();
+        assertThat(getJson("/api/auth/data-scope", admin, 200).get("scope").asInt()).isEqualTo(1);
+        assertThat(getJson("/api/auth/data-scope", memberToken, 200).get("scope").asInt()).isEqualTo(3);
+    }
+
+    @Test
     void 停用账号后无法登录() throws Exception {
         String email = "disabled@test.local";
         postJson("/api/auth/register", body(Map.of("name", "停用", "email", email, "password", "pw-1234567890")), null, 201);

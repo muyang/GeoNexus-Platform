@@ -51,6 +51,15 @@ meta: { shell: 'portal', access: 'perm', perm: 'system:user:list', ... }    // �
 并给出明确提示 —— 同时 GeoCard 图层继续可见，另有"定位到数据"按钮一键缩放到数据范围。
 无 WebGL 时会直接说明，而不是给一块黑屏。
 
+### 两个踩过的坑（都写进了代码注释与测试）
+
+1. **地图容器高度塌成 0**：MapLibre 自带 `.maplibregl-map{position:relative}` 与我们原来的
+   `.earth-map{position:absolute}` 同优先级；而 maplibre 的 CSS 按需引入、**后注入**，于是覆盖了我们的规则，
+   `inset:0` 失效 → 容器高度 0 → 画布只剩默认 300px（真机与无头都表现为"地图没加载"）。
+   现已在 `main.js` 把 maplibre 的 CSS 前置，并把选择器写成 `.earth > .earth-map` 提升优先级（双保险）。
+2. **GeoKG `/graph` 的 `focus` 是必填**：没有"按层级列全图"的模式，传 `level` 会 422。
+   概览改用 `/api/geokg/health`（给数据版本与实体/关系数）；要子图先用 `/search` 拿实体 id。
+
 ### 地图验证的边界（重要）
 
 本仓库的自动化验证能证明：MapLibre 初始化成功（DOM 里有 canvas 与控件）、样式加载完成

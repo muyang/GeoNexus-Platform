@@ -21,6 +21,10 @@ public class IdentityProperties {
     private String adminPassword = "Admin@GeoNexus2026";
     /** 公众自助注册落在哪个部门（部门名）。 */
     private String publicDeptName = "公众用户";
+    /** 是否初始化演示账号（生产环境应设为 false 并改掉所有口令）。 */
+    private boolean demoAccounts = true;
+    /** 演示账号的统一口令（admin 除外）。 */
+    private String demoPassword = "Demo@GeoNexus2026";
 
     public String getIssuer() { return issuer; }
     public void setIssuer(String issuer) { this.issuer = issuer; }
@@ -38,4 +42,8 @@ public class IdentityProperties {
     public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
     public String getPublicDeptName() { return publicDeptName; }
     public void setPublicDeptName(String publicDeptName) { this.publicDeptName = publicDeptName; }
+    public boolean isDemoAccounts() { return demoAccounts; }
+    public void setDemoAccounts(boolean demoAccounts) { this.demoAccounts = demoAccounts; }
+    public String getDemoPassword() { return demoPassword; }
+    public void setDemoPassword(String demoPassword) { this.demoPassword = demoPassword; }
 }

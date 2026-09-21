@@ -1499,6 +1499,17 @@ function serveFrontend(req, res, pathname) {
 }
 
 /** 上传文件（/uploads/**）：只允许 UPLOADS_DIR 内，拒绝路径穿越。 */
+/** 身份前置：请求带的 JWT 若用了本地还没有的 kid（Java 重启会换密钥），先刷新一次 JWKS。
+ *  不做这一步的话，"Java 重启后第一次业务调用"会被误判成未认证 → 前端莫名被登出（实测踩到）。 */
+async function preflightIdentity(req) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token || token.split('.').length !== 3) return;
+  const kid = jwtVerifier.peekKeyId(token);
+  if (kid && jwtVerifier.hasKey(kid)) return;
+  await jwtVerifier.refresh();
+}
+
 function serveUpload(req, res, pathname) {
   const rel = decodeURIComponent(pathname.replace(/^\/uploads\/?/, ''));
   const filePath = path.resolve(UPLOADS_DIR, rel);
@@ -1526,8 +1537,11 @@ async function handleApi(req, res, url) {
     const { salt, passwordHash } = hashPassword(body.password);
     db.prepare('INSERT INTO users (id, name, email, passwordHash, salt, org, roles, scopes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(id, body.name, String(body.email).toLowerCase(), passwordHash, salt, body.org || 'GeoNexus Workspace',
-          JSON.stringify(body.roles || ['public_visitor']),
-          JSON.stringify(body.scopes || ['earth:view', 'card:read', 'case:read']));
+          // 安全：角色与 scopes 一律由服务端赋默认值，**绝不采信请求体** ——
+          // 曾经写成读取 body.roles/body.scopes，那等于任何人都能自助注册成管理员。
+          // 提权只有两条路：ADMIN_EMAILS 引导，或 Java 管理面分配角色。
+          JSON.stringify(['public_visitor']),
+          JSON.stringify(['earth:view', 'card:read', 'case:read']));
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     const session = createSession(id);
     return send(res, 201, { user: publicUser(user), token: session.token, expiresAt: session.expiresAt });
@@ -1914,23 +1928,37 @@ function listen(port) {
       proxyIdentity(req, res, url);
       return;
     }
-    // 2) GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
+    // 2) 身份前置（异步）：确保公钥是最新的，再进入同步的鉴权判定
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/.well-known')) {
+      preflightIdentity(req).catch(() => { /* 刷不到就按未认证处理 */ })
+        .then(() => dispatch(req, res, url))
+        .catch((error) => {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
+      return;
+    }
+    // 静态与上传：同步路径（新前端 SPA、上传文件、健康检查、已删除的旧门户）
+    serveStaticPath(req, res, url);
+  });
+
+  /** 同步分派（身份前置已完成）：GeoKG 代理 → 治理面 → 门户原有 API。 */
+  function dispatch(req, res, url) {
+    // GeoKG 代理必须先于通用 /api/ 判断，否则会被门户自己的 API 处理器吃掉
     if (url.pathname.startsWith('/api/geokg/')) {
       proxyGeoKG(req, res, url);
       return;
     }
     if (url.pathname.startsWith('/api/')) {
       // 治理面先分派；返回 false 表示未命中，回落到门户原有 API 处理
-      governance(req, res, url).then((handled) => {
-        if (handled) return;
-        return handleApi(req, res, url);
-      }).catch((error) => {
-        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: error.message }));
-      });
-      return;
+      return governance(req, res, url).then((handled) => (handled ? undefined : handleApi(req, res, url)));
     }
-    // 3) 健康检查：不依赖 nginx 也能探活（nginx 侧另有一条同名 location 会短路到这里）
+    // /.well-known/* 在未配置身份代理时，本进程没有对应端点
+    return notFound(res);
+  }
+
+  function serveStaticPath(req, res, url) {
+    // 健康检查：不依赖 nginx 也能探活（nginx 侧另有一条同名 location 会短路到这里）
     if (url.pathname === '/healthz') {
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end('ok\n');
@@ -1948,7 +1976,7 @@ function listen(port) {
       return;
     }
     serveFrontend(req, res, url.pathname);
-  });
+  }
 
   server.once('error', (error) => {
     if (error.code === 'EADDRINUSE') {

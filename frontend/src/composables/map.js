@@ -46,6 +46,8 @@ export function useMap() {
       attributionControl: { compact: true }
     })
     loading.value = true
+    // 诊断句柄：排障脚本与浏览器控制台可直接查看地图内部状态（只读，勿依赖）
+    if (typeof window !== 'undefined') window.__gnxMap = map.value
     map.value.on('load', () => {
       ready.value = true; loading.value = false; basemapFailed.value = false
       if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }

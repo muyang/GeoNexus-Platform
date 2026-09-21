@@ -62,7 +62,7 @@ router.beforeEach(async (to) => {
   if (!auth.ready) await auth.restore()
   // 开发期演示入口：?demo=1 公众账号 / ?demo=admin 种子管理员（生产构建无此分支）
   const demo = to.query.demo
-  if (import.meta.env.DEV && demo && !auth.loggedIn) await auth.applyDemoSession(demo === 'admin')
+  if (import.meta.env.DEV && demo && !auth.loggedIn) await auth.applyDemoSession(String(demo))
   // 刻意**不做重定向**：游客浏览门户、地图、目录与案例不应被打断。
   // 需要登录/权限的页面由 App.vue 里的 AccessGate 就地给出引导（URL 与上下文都保留）。
   return true

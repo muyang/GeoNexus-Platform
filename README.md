@@ -308,6 +308,18 @@ Java 管理端只通过 HTTP 访问执行面（`geonexus.execution-plane.url`，
 
 **一个入口，一个端口**：Node BFF 既提供前端产物，也按路径把请求分流到各后端。
 
+**演示账号**（由 Java 侧种子初始化；`geonexus.identity.demo-accounts=false` 可整体关闭，生产必关）：
+
+| 账号 | 口令 | 角色 | 能做什么 |
+|---|---|---|---|
+| `admin` | `Admin@GeoNexus2026` | 平台管理员 | 全部（含后台管理） |
+| `operator` | `Demo@GeoNexus2026` | 平台运营 | 审批 / 配额 / 资源 / 开发管理，**无**系统管理 |
+| `member` | `Demo@GeoNexus2026` | 机构成员 | 浏览 + **智能工作台**（空间分析、案例复跑） |
+| `visitor` | `Demo@GeoNexus2026` | 公众访客 | 只能浏览（目录、案例、地图） |
+
+口令可用 `GEONEXUS_IDENTITY_ADMINPASSWORD` / `GEONEXUS_IDENTITY_DEMOPASSWORD` 覆盖；
+开发期还可用 `?demo=admin|member|visitor` 直接切换身份（生产构建不含此分支）。
+
 访问规则：**游客即可浏览**门户、可视化地球、数据目录与案例；**智能工作台 / 个人中心需登录**；
 **后台管理需权限**。需要登录时不跳转，页内说明并给出入口（见 `docs/user-management.md` 二·五节）。
 

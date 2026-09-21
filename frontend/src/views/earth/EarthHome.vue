@@ -7,17 +7,20 @@ import SourceTag from '@/components/SourceTag.vue'
 
 const ui = useUiStore()
 const { syncLayers, fit } = useMap()
-const stats = ref({ cards: 0, cases: 0, dataset: '—' })
+const stats = ref({ cards: 0, cases: 0, dataset: '—', entities: null, relations: null })
 const source = ref('')
 const degraded = ref(false)
 const recent = ref([])
 const error = ref('')
 
 onMounted(async () => {
-  const [cards, cases, kg] = await Promise.all([cardApi.list(), caseApi.list(), knowledgeApi.graph()])
+  const [cards, cases, kg] = await Promise.all([cardApi.list(), caseApi.list(), knowledgeApi.health()])
   stats.value.cards = cards.rows.length
   stats.value.cases = cases.rows.length
-  stats.value.dataset = kg.graph?.dataset || '—'
+  stats.value.dataset = kg.health?.dataset_version || '—'
+  const g = kg.health?.graph_cache?.entries?.[0]
+  stats.value.entities = g?.entities ?? null
+  stats.value.relations = g?.relations ?? null
   recent.value = cases.rows.slice(0, 3)
   source.value = cards.source
   degraded.value = cards.degraded   // 主源：GeoCard 目录。案例/知识各自带来源标签
@@ -36,7 +39,8 @@ onMounted(async () => {
       </div>
       <div class="earth-card">
         <h4>{{ ui.t('nav.cases') }}</h4>
-        <p>{{ stats.cases }} 个可复现案例 · GeoKG 数据集 {{ stats.dataset }}</p>
+        <p>{{ stats.cases }} 个可复现案例 · GeoKG 数据集 {{ stats.dataset }}<template v-if="stats.entities">
+          （实体 {{ stats.entities }} · 关系 {{ stats.relations }}）</template></p>
       </div>
     </div>
 

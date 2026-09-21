@@ -2,7 +2,9 @@
  * 版式与令牌对齐参考件 mogan-digital-earth-8793-standalone.html 的 .atlas 皮肤。 */
 
 .earth { position: relative; height: 100%; overflow: hidden; background: var(--e-bg); }
-.earth-map { position: absolute; inset: 0; }                 /* MapLibre 容器 */
+/* 用 .earth > 提高优先级：maplibre 自带 .maplibregl-map{position:relative} 是同级选择器，
+ * 仅靠引入顺序不够稳（打包顺序/按需加载一变就会回退到这个 bug：容器高度 0、地图不显示）。 */
+.earth > .earth-map { position: absolute; inset: 0; }        /* MapLibre 容器 */
 .earth-map .maplibregl-canvas { outline: none; }
 .earth-map-fallback { position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; text-align: center; padding: 40px; color: var(--e-dim); }
