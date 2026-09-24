@@ -52,6 +52,36 @@
 | POST | `/api/sdk/geocards/publish` | 需登录；卡片以 **pending** 提交到 SDK，并镜像成本地审批单 |
 | POST | `/api/sdk/geocards/:id/approve` `/reject` | **需管理员**；转发 SDK，附带 `X-API-Key` |
 
+### 方案（Recipe）：目录 → 派生 → 物化 → 执行 → 交付物
+方案是"知识产品"的**可执行**一面：卡片说这是什么，方案说怎么跑，交付物是这次跑的结论。
+平台在这里只做三件事：提交、转发、落地 —— **参数契约与任务图都由 SDK 判定**
+（`geo.plan`，见 SDK 的 `docs/RECIPE.md`），平台不复制一份校验规则，也不自己排 DAG。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/recipes` | SDK 目录（默认只看 approved）∪ 本平台绑定；`?q=&param=&role=&caseId=&all=true` |
+| POST | `/api/recipes` | **需 `geocard:publish`**；方案以 **pending** 进 SDK 审核队列 |
+| POST | `/api/recipes/plan` | 物化但不执行；参数契约错误原样回 **400 + `field`/`code`**（前端高亮输入框） |
+| POST | `/api/recipes/fork` | 派生：新地址 + 新参数，源方案不动；默认同时建一个草稿案例 |
+| POST | `/api/recipes/run` | 需登录；先物化再按任务图逐步提交，产出交付物记录 |
+| GET | `/api/cases/:id/layers` | 四级 LOD + 双时间轴（数据时间 vs 执行时间）的**数据面**，画法由前端定 |
+| GET | `/api/cases/:id/deliverables` | 该案例的交付物清单 |
+| GET | `/api/deliverables/:id` | 交付物元数据（**不含磁盘路径**） |
+| GET | `/api/deliverables/:id/report` | 需登录；按白名单受控读取产物文件（文本类自动补 `charset=utf-8`） |
+
+落地约定（都有测试钉住，见 `tests/api.test.mjs` 的「方案」与「验收」两组）：
+
+- **派生件默认待审**：`fork` 出的方案与它派生的案例都是草稿态，未发布不能运行（409）。
+- **参数只在 SDK 判定**：`param_out_of_range` / `param_missing` 等由 SDK 返回，平台翻译成
+  400 并带上 `field`，不自己判断"2015 到 2024 之间"。
+- **逐步执行、逐步留痕**：每个配方步骤一条 `case_runs` 记录（`stepId` 显式落字段），
+  上游产物按方案声明的 `step://s3/report` 引用名传给下游；上游没成功就中止整次运行，
+  不产出半成品。
+- **交付物 ≠ 中间产物**：只有方案 `outputs` 声明过的才算交付物；路径不进公开响应，
+  下载走 `ARTIFACT_ROOTS` 白名单（越界 403，与单技能复跑同一策略）。
+- **目录降级要说清**：SDK 目录不可达时，平台侧绑定照常返回，响应里的 `sdk.status`
+  标成 `down` 并给出错误，不假装目录是空的。
+
 ### 总览与审计
 `GET /api/admin/overview`（计数 + SDK 状态）、`GET /api/admin/audit?limit=`（只追加）。
 
@@ -83,7 +113,9 @@ ADMIN_EMAILS=demo@local node server.js
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
-| `REGISTRY_URL` | `http://127.0.0.1:8790` | SDK Registry 地址 |
+| `REGISTRY_URL` | `http://127.0.0.1:8790` | SDK Registry 地址（卡片目录 **与方案目录**） |
+| `SDK_NODE_URL` | `http://127.0.0.1:8787` | GeoNode 地址：`geo.plan` 物化方案的入口 |
+| `ARTIFACT_ROOTS` | `UPLOADS_DIR:SDK_WORKDIR` | 交付物/产物可读取的根目录白名单（冒号分隔） |
 | `SDK_REGISTRY_API_KEY` | 空 | 转发为 `X-API-Key`（注册中心配了 key 时必填） |
 | `ADMIN_EMAILS` | 空 | 管理员引导 |
 | `DATA_DIR` / `UPLOADS_DIR` / `SEED_PATH` | 仓库内 | 可覆盖，测试用隔离目录；种子文件缺失不再导致启动失败 |

@@ -18,12 +18,119 @@ const API_KEY = 'test-api-key';
 // ── 假 SDK Registry ─────────────────────────────────────────────────────
 const registry = {
   cards: new Map(),
+  recipes: new Map(),
   requests: [],
   apiKeysSeen: [],
-  reset() { this.cards.clear(); this.requests.length = 0; this.apiKeysSeen.length = 0; }
+  /** 回到夹具基线：卡片清空，但方案目录要**重新种上**已批准的那一份。 */
+  reset() {
+    this.cards.clear(); this.requests.length = 0; this.apiKeysSeen.length = 0;
+    this.seedRecipes();
+  },
+  seedRecipes() {
+    const seed = fixtureRecipe();
+    this.recipes.clear();
+    this.recipes.set(seed.id, { recipe: seed, provider_url: 'http://node-a',
+      registered_at: new Date().toISOString(), status: 'approved', review_note: null,
+      submitted_by: null, review_history: [] });
+    return seed;
+  }
 };
 
-function startFakeRegistry() {
+/** 一份「2 数据 + 1 算子 + 1 报告」的方案：就是验收里要 fork 的那一份。 */
+function fixtureRecipe({ region = '蒙古', year = null, scope = 'reusable' } = {}) {
+  return {
+    recipe_version: '1.0',
+    id: 'recipe://geonexus/sdg-15-3-1@1.0.0',
+    name: 'SDG 15.3.1 土地退化评估',
+    description: '2 数据 + 1 算子 + 1 报告',
+    tags: ['sdg'],
+    params: [
+      { name: 'year', type: 'integer', required: year === null, minimum: 2015, maximum: 2024, scope, ...(year === null ? {} : { default: year }) },
+      { name: 'region', type: 'enum', enum: ['蒙古', '墨西哥'], default: region },
+      { name: 'baseline', type: 'integer', scope: 'fixed', default: 2015 }
+    ],
+    steps: [
+      { id: 's1', kind: 'skill', uses: 'sdg-aoi', params: { region: '${params.region}' }, outputs: { aoi: '边界', mask: '掩膜' } },
+      { id: 's2', kind: 'skill', uses: 'sdg-degrade', depends_on: ['s1'], params: { year: '${params.year}', baseline: '${params.baseline}' }, inputs: { mask: 'step://s1/mask' }, outputs: { degradation: '退化栅格', transition: '转移矩阵' } },
+      { id: 's3', kind: 'skill', uses: 'sdg-report', depends_on: ['s2'], inputs: { degradation: 'step://s2/degradation' }, outputs: { report: '报告' } }
+    ],
+    entrypoint: 's1',
+    outputs: [
+      { name: 'degradation_map', from: 's2.degradation', role: 'data', media_type: 'image/tiff' },
+      { name: 'report', from: 's3.report', role: 'knowledge', media_type: 'text/html' }
+    ]
+  };
+}
+
+/** 假 GeoNode：只实现 geo.plan（物化），用来验证"平台不自己排 DAG"。 */
+const fakeNode = { planCalls: [], reset() { this.planCalls.length = 0; } };
+
+function startFakeNode() {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const json = (status, payload) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(payload)); };
+      if (url.pathname === '/capabilities') {
+        return json(200, { protocol: 'geomcp', methods: ['geo.capabilities', 'geo.describe', 'geo.execute', 'geo.plan', 'geo.health'],
+          recipe_planning: { enabled: true, method: 'geo.plan', read_only: true, recipes: registry.recipes.size } });
+      }
+      if (url.pathname !== '/geomcp') return json(404, { detail: 'not found' });
+      const body = raw ? JSON.parse(raw) : {};
+      if (body.method !== 'geo.plan') return json(200, { jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'not found' } });
+      fakeNode.planCalls.push(body.params);
+      const address = body.params?.recipe || '';
+      const entry = registry.recipes.get(address)
+        || [...registry.recipes.values()].find((e) => e.recipe.id.startsWith(address));
+      if (!entry) return json(200, { jsonrpc: '2.0', id: body.id, error: { code: 2005, message: `Recipe not found: ${address}`, data: { recipe: address } } });
+      const recipe = entry.recipe;
+      const params = {
+        ...Object.fromEntries(recipe.params.filter((sp) => sp.default !== undefined).map((sp) => [sp.name, sp.default])),
+        ...(body.params.params || {})
+      };
+      // 参数契约由"SDK 侧"判定：平台不该复制这套规则，只该翻译 field/code。
+      for (const spec of recipe.params) {
+        const value = params[spec.name];
+        if (spec.required && (value === undefined || value === null)) {
+          const message = `required parameter '${spec.name}' is missing`;
+          return json(200, { jsonrpc: '2.0', id: body.id, error: { code: 2006, message, data: { field: spec.name, code: 'param_missing', message } } });
+        }
+        if (spec.minimum !== undefined && value !== undefined && Number(value) < spec.minimum) {
+          const message = `param '${spec.name}' must be >= ${spec.minimum}, got ${value}`;
+          return json(200, { jsonrpc: '2.0', id: body.id, error: { code: 2006, message, data: { field: spec.name, code: 'param_out_of_range', message } } });
+        }
+      }
+      const runId = body.params.run_id || 'run';
+      // 替换规则与 SDK 一致：整串是占位符时保留原始类型，否则按文本插值。
+      const substitute = (value) => {
+        if (typeof value === 'string') {
+          const whole = /^\$\{\s*params\.([A-Za-z_]\w*)\s*\}$/.exec(value.trim());
+          if (whole) return params[whole[1]];
+          return value.replace(/\$\{\s*params\.([A-Za-z_]\w*)\s*\}/g, (_, name) => String(params[name] ?? ''));
+        }
+        if (Array.isArray(value)) return value.map(substitute);
+        if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substitute(v)]));
+        return value;
+      };
+      const tasks = recipe.steps.map((step) => ({
+        task_id: `${runId}:${step.id}`, step: step.id, kind: step.kind, uses: step.uses,
+        depends_on: (step.depends_on || []).map((d) => `${runId}:${d}`),
+        params: substitute(step.params || {}), inputs: step.inputs || {}, outputs: step.outputs || {}
+      }));
+      const deliverables = Object.fromEntries(recipe.outputs.map((o) => [o.name, { from: o.from, role: o.role, media_type: o.media_type }]));
+      return json(200, { jsonrpc: '2.0', id: body.id, result: {
+        recipe, recipe_id: recipe.id, run_id: runId, params,
+        reusable_params: recipe.params.filter((sp) => sp.scope !== 'fixed').map((sp) => sp.name),
+        fixed_params: recipe.params.filter((sp) => sp.scope === 'fixed').map((sp) => sp.name),
+        tasks, deliverables
+      } });
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+}
+
+function startFakeRegistry(port = 0) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     let raw = '';
@@ -61,16 +168,101 @@ function startFakeRegistry() {
         entry.review_history.push({ at: new Date().toISOString(), action: decide[2], by: body?.by || null });
         return json(200, { status: entry.status, id: entry.card.id, entry });
       }
+
+      // ── 方案目录（V1.1）─────────────────────────────────────────────
+      if (req.method === 'GET' && url.pathname === '/recipes') {
+        const want = url.searchParams.get('status');
+        const approvedOnly = url.searchParams.get('approved_only') === 'true';
+        const param = url.searchParams.get('param');
+        const role = url.searchParams.get('role');
+        const rows = [...registry.recipes.values()].filter((e) => {
+          if (approvedOnly && e.status !== 'approved') return false;
+          if (want && want !== 'all' && e.status !== want) return false;
+          if (param && !e.recipe.params.some((p2) => p2.name === param)) return false;
+          if (role && !e.recipe.outputs.some((o) => o.role === role)) return false;
+          return true;
+        });
+        return json(200, { count: rows.length, recipes: rows.map((e) => ({
+          id: e.recipe.id, name: e.recipe.name, description: e.recipe.description,
+          version: e.recipe.id.split('@')[1] || null, status: e.status, provider_url: e.provider_url,
+          steps: e.recipe.steps.length, params: e.recipe.params.map((p2) => p2.name),
+          reusable_params: e.recipe.params.filter((p2) => p2.scope !== 'fixed').map((p2) => p2.name),
+          outputs: e.recipe.outputs.map((o) => o.name), tags: e.recipe.tags || [], license: null,
+          created_at: e.registered_at
+        })) });
+      }
+      if (req.method === 'POST' && url.pathname === '/recipes') {
+        if (req.headers['x-api-key'] !== API_KEY) return json(401, { detail: 'Missing or invalid X-API-Key' });
+        const recipe = body?.recipe;
+        if (!recipe?.id) return json(422, { detail: 'Body must contain recipe' });
+        if (registry.recipes.has(recipe.id) && !body?.replace) return json(409, { detail: `Recipe already registered: ${recipe.id}` });
+        const entry = { recipe, provider_url: body.provider_url || 'unknown', registered_at: new Date().toISOString(),
+          status: body.status || 'pending', review_note: null, submitted_by: body.submitted_by || null,
+          review_history: [{ at: new Date().toISOString(), action: 'registered', by: body.submitted_by || null, note: null }] };
+        registry.recipes.set(recipe.id, entry);
+        return json(201, { status: 'registered', id: recipe.id, entry });
+      }
+      const recipeDecide = url.pathname.match(/^\/recipes\/(.+)\/(approve|reject)$/);
+      if (req.method === 'POST' && recipeDecide) {
+        if (req.headers['x-api-key'] !== API_KEY) return json(401, { detail: 'Missing or invalid X-API-Key' });
+        const address = decodeURIComponent(recipeDecide[1]);
+        const entry = registry.recipes.get(address)
+          || [...registry.recipes.values()].find((e) => e.recipe.id.startsWith(address));
+        if (!entry) return json(404, { detail: `Recipe not registered: ${address}` });
+        entry.status = recipeDecide[2] === 'approve' ? 'approved' : 'rejected';
+        entry.review_note = body?.note || null;
+        entry.review_history.push({ at: new Date().toISOString(), action: recipeDecide[2], by: body?.by || null });
+        return json(200, { status: entry.status, id: entry.recipe.id, entry });
+      }
+      if (req.method === 'POST' && url.pathname === '/recipes/fork') {
+        if (req.headers['x-api-key'] !== API_KEY) return json(401, { detail: 'Missing or invalid X-API-Key' });
+        const source = [...registry.recipes.values()].find((e) => e.recipe.id.startsWith(body?.recipe_id));
+        if (!source) return json(404, { detail: `Recipe not registered: ${body?.recipe_id}` });
+        const known = new Set(source.recipe.params.map((p2) => p2.name));
+        const unknown = Object.keys({ ...(body.params || {}), ...(body.fixed || {}) }).filter((k) => !known.has(k));
+        if (unknown.length) return json(422, { detail: `cannot fork: unknown parameter(s) ${unknown.join(', ')}` });
+        const version = body.version || '1.0.0';
+        const forked = JSON.parse(JSON.stringify(source.recipe));
+        forked.id = `recipe://${body.namespace || 'geonexus'}/${body.name || `${source.recipe.id.split('/')[3].split('@')[0]}-fork`}@${version}`;
+        if (body.title) forked.name = body.title;
+        forked.params = forked.params.map((sp) => {
+          if (body.params && sp.name in body.params) sp.default = body.params[sp.name];
+          if (body.fixed && sp.name in body.fixed) { sp.scope = 'fixed'; sp.default = body.fixed[sp.name]; }
+          if (sp.default !== undefined) delete sp.required;
+          return sp;
+        });
+        const entry = { recipe: forked, provider_url: body.provider_url || 'unknown',
+          registered_at: new Date().toISOString(), status: body.register === false ? 'approved' : 'pending',
+          review_note: `forked from ${source.recipe.id}`, submitted_by: null, review_history: [] };
+        if (body.register !== false) registry.recipes.set(forked.id, entry);
+        return json(201, { status: 'forked', from: body.recipe_id, id: forked.id, recipe: forked, entry });
+      }
+      const recipeGet = url.pathname.match(/^\/recipes\/(.+)$/);
+      if (req.method === 'GET' && recipeGet) {
+        const address = decodeURIComponent(recipeGet[1]);
+        const entry = registry.recipes.get(address)
+          || [...registry.recipes.values()].find((e) => e.recipe.id.startsWith(address) && e.status === 'approved')
+          || [...registry.recipes.values()].find((e) => e.recipe.id.startsWith(address));
+        if (!entry) return json(404, { detail: `Recipe not registered: ${address}` });
+        return json(200, { entry, summary: { id: entry.recipe.id, name: entry.recipe.name, status: entry.status,
+          params: entry.recipe.params.map((p2) => p2.name),
+          reusable_params: entry.recipe.params.filter((p2) => p2.scope !== 'fixed').map((p2) => p2.name),
+          outputs: entry.recipe.outputs.map((o) => o.name), steps: entry.recipe.steps.length } });
+      }
       return json(404, { detail: 'not found' });
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port }));
   });
 }
 
 // ── 假 SDK Web BFF（8900 的角色）：唯一带 task_id 的入口 ─────────────────
 const sdkWeb = { loginCalls: 0, executeBodies: [], cancels: [], taskPolls: 0, failExecute: false };
+/** 方案运行的每一步都是独立任务，所以这里按 skill 生成任务，而不是共用一个 id。 */
+const recipeTasks = new Map();
+let recipeTaskSeq = 0;
+const isRecipeStep = (skill) => String(skill || '').startsWith('sdg-');
 
 function startFakeSdkWeb() {
   const server = http.createServer((req, res) => {
@@ -91,7 +283,35 @@ function startFakeSdkWeb() {
         sdkWeb.executeBodies.push(body);
         sdkWeb.lastSkill = body?.skill;
         if (sdkWeb.failExecute) return json(500, { detail: 'node unreachable' });
+        if (isRecipeStep(body?.skill)) {
+          // 每步一个任务；第一次轮询 running，之后 done 并带上这一步的产物。
+          const taskId = `task-step-${++recipeTaskSeq}`;
+          recipeTasks.set(taskId, { skill: body.skill, params: body.params || {}, polls: 0 });
+          return json(202, { task_id: taskId, status: 'queued' });
+        }
         return json(202, { task_id: 'task-abc123', status: 'queued' });
+      }
+      const stepTask = url.pathname.match(/^\/api\/tasks\/(task-step-\d+)(\/cancel)?$/);
+      if (stepTask) {
+        const taskId = stepTask[1];
+        const state = recipeTasks.get(taskId);
+        if (!state) return json(404, { detail: 'unknown task' });
+        if (stepTask[2]) {
+          sdkWeb.cancels.push(true);
+          return json(200, { id: taskId, status: 'cancelled' });
+        }
+        state.polls += 1;
+        if (state.polls === 1) {
+          return json(200, { id: taskId, status: 'running', progress: 0.5, message: 'computing', error: null });
+        }
+        const dir = sdkWeb.artifactDir;
+        const outputs = {
+          'sdg-aoi': { aoi: `${dir}/aoi.geojson`, mask: `${dir}/mask.tif` },
+          'sdg-degrade': { degradation: `${dir}/degradation.tif`, transition: `${dir}/transition.csv` },
+          'sdg-report': { report: `${dir}/report.html` }
+        }[state.skill] || {};
+        return json(200, { id: taskId, status: 'done', progress: 1, message: 'ok', error: null,
+          result: { status: 'ok', skill: state.skill, outputs } });
       }
       if (url.pathname === '/api/tasks/task-abc123') {
         sdkWeb.taskPolls += 1;
@@ -121,12 +341,13 @@ function startFakeSdkWeb() {
 let platform; let base; let tmpDir;
 const spawned = [];   // 所有被拉起的平台进程，after 里统一 kill，避免失败时留孤儿进程
 
-function startPlatform({ registryUrl, adminEmails, sdkWebUrl, artifactRoots, jwksUrl }) {
+function startPlatform({ registryUrl, adminEmails, sdkWebUrl, artifactRoots, jwksUrl, nodeUrl }) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnx-test-'));
   const env = { ...process.env, PORT: String(3200 + Math.floor(Math.random() * 300)),
     DATA_DIR: tmpDir, UPLOADS_DIR: path.join(tmpDir, 'uploads'),
     REGISTRY_URL: registryUrl, SDK_REGISTRY_API_KEY: API_KEY, ADMIN_EMAILS: adminEmails,
     SDK_WEB_URL: sdkWebUrl, SDK_WEB_USER: 'admin', SDK_WEB_PASSWORD: 'admin',
+    // 单技能复跑仍打默认节点（既有用例断言了这个 node_url）；方案运行则显式传 nodeUrl
     SDK_NODE_URL: 'http://127.0.0.1:8787', ARTIFACT_ROOTS: artifactRoots,
     // 测试要直接验证本进程的会话认证与治理面：把身份代理关掉（生产默认是代理到 Java）
     IDENTITY_BASE_URL: '',
@@ -173,11 +394,21 @@ let adminToken; let publicToken;
 before(async () => {
   const fake = await startFakeRegistry();
   const fakeWeb = await startFakeSdkWeb();
+  const fakeNodeSrv = await startFakeNode();
   const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'gnx-artifacts-'));
   fs.writeFileSync(path.join(artifacts, 'ndvi.tif'), 'GEOTIFF-PLACEHOLDER');
+  // 方案运行的每步产物：报告是一份真的 HTML，交付物接口要能把它读出来。
+  fs.writeFileSync(path.join(artifacts, 'report.html'), '<html><body><h1>SDG 15.3.1</h1></body></html>');
+  fs.writeFileSync(path.join(artifacts, 'degradation.tif'), 'GEOTIFF-PLACEHOLDER');
+  fs.writeFileSync(path.join(artifacts, 'transition.csv'), 'from,to,area\n');
+  fs.writeFileSync(path.join(artifacts, 'aoi.geojson'), '{"type":"FeatureCollection","features":[]}');
+  fs.writeFileSync(path.join(artifacts, 'mask.tif'), 'GEOTIFF-PLACEHOLDER');
   sdkWeb.artifactDir = artifacts;
+  // 目录里先放一份**已批准**的方案：这是"可以被复用的知识产品"。
+  registry.seedRecipes();
   platform = await startPlatform({ registryUrl: `http://127.0.0.1:${fake.port}`, adminEmails: 'admin@test.local',
     sdkWebUrl: `http://127.0.0.1:${fakeWeb.port}`, artifactRoots: artifacts,
+    nodeUrl: `http://127.0.0.1:${fakeNodeSrv.port}`,
     jwksUrl: 'http://127.0.0.1:1/.well-known/jwks.json' });   // 故意指向不可达地址：会话令牌路径不受影响
   base = `http://127.0.0.1:${platform.port}`;
   // 管理员与公众账号各一
@@ -187,6 +418,7 @@ before(async () => {
   publicToken = u.data.token;
   platform.registryServer = fake.server;
   platform.webServer = fakeWeb.server;
+  platform.nodeServer = fakeNodeSrv.server;
 });
 
 after(() => {
@@ -194,6 +426,7 @@ after(() => {
   platform?.child?.kill();
   platform?.registryServer?.close();
   platform?.webServer?.close();
+  platform?.nodeServer?.close();
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -396,11 +629,17 @@ test('管理总览包含计数与 SDK 状态；写操作留下审计', async () 
 test('SDK 掉线时目录接口 503 且给出可操作提示（前端据此回退）', async () => {
   const dead = await api('/api/sdk/geocards');
   assert.equal(dead.status, 200, '注册中心在线时应正常返回');
+  const registryPort = platform.registryServer.address().port;
   platform.registryServer.close();     // 断掉假注册中心
   const r = await api('/api/sdk/geocards');
   assert.equal(r.status, 503);
   assert.match(r.data.error, /连不上 SDK Registry/);
   assert.ok(r.data.hint);
+
+  // 恢复注册中心：后续用例（方案目录等）依赖它在线。平台按 URL 直连，
+  // 所以这里要起回同一个端口，才能让"掉线"只影响本用例。
+  const revived = await startFakeRegistry(registryPort);
+  platform.registryServer = revived.server;
 });
 
 // ── 案例「一键复跑」：接 SDK Web BFF（唯一带 task_id 的入口）───────────────
@@ -729,4 +968,225 @@ test('地图设置：只有管理员能改，且校验取值', async () => {
   // 写入留审计
   const audit = await api('/api/admin/audit?limit=50', { token: adminToken });
   assert.ok(audit.data.items.some((a) => a.action === 'settings.update'));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  方案（Recipe）：目录 → fork 改参数 → 重跑 → 交付物下载
+//  平台不复制参数契约、不自己排 DAG：这两件事都问 SDK（这里是假节点）。
+// ══════════════════════════════════════════════════════════════════════════
+let fakeNodeUrl;
+test('方案：目录只列已批准的，并标出 SDK 状态', async () => {
+  fakeNodeUrl = `http://127.0.0.1:${platform.nodeServer.address().port}`;
+  const res = await api('/api/recipes');
+  assert.equal(res.status, 200);
+  const seeded = res.data.items.find((r) => r.id === 'recipe://geonexus/sdg-15-3-1@1.0.0');
+  assert.ok(seeded, `目录里应有已批准的方案，实际：${JSON.stringify(res.data.items)}`);
+  assert.equal(seeded.source, 'sdk-catalogue');
+  assert.deepEqual(seeded.reusable_params, ['year', 'region']);
+  assert.deepEqual(seeded.outputs, ['degradation_map', 'report']);
+  assert.equal(res.data.sdk.status, 'up');
+
+  // 契约过滤：按"能不能改这个参数"找方案
+  assert.equal((await api('/api/recipes?param=year')).data.items.length >= 1, true);
+  assert.equal((await api('/api/recipes?param=crs')).data.items.length, 0);
+  assert.equal((await api('/api/recipes?role=knowledge')).data.items.length >= 1, true);
+
+  // 提交一份新方案：默认进待审队列，未批准就不该出现在"可复用"里
+  const submitted = await api('/api/recipes', { method: 'POST', token: adminToken,
+    body: { recipe: { ...fixtureRecipe(), id: 'recipe://muyang/draft@0.1.0' } } });
+  assert.equal(submitted.status, 201);
+  assert.equal(submitted.data.submitted.entry.status, 'pending');
+  const after = await api('/api/recipes');
+  assert.equal(after.data.items.some((r) => r.id === 'recipe://muyang/draft@0.1.0'), false);
+  assert.equal((await api('/api/recipes?all=true')).data.items.some((r) => r.id === 'recipe://muyang/draft@0.1.0'), true);
+  // 公众不能提交（需要 geocard:publish）
+  assert.equal((await api('/api/recipes', { method: 'POST', token: publicToken,
+    body: { recipe: fixtureRecipe() } })).status, 403);
+});
+
+test('方案：物化不执行，参数契约错误带字段名回来', async () => {
+  fakeNode.planCalls.length = 0;
+  const before = sdkWeb.executeBodies.length;
+
+  const ok = await api('/api/recipes/plan', { method: 'POST', token: adminToken,
+    body: { recipe: 'recipe://geonexus/sdg-15-3-1@1.0.0', params: { year: 2021 }, runId: 'plan-1', nodeUrl: fakeNodeUrl } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.data.plan.tasks.map((t) => t.step), ['s1', 's2', 's3']);
+  assert.deepEqual(ok.data.plan.tasks[1].depends_on, ['plan-1:s1']);
+  assert.deepEqual(Object.keys(ok.data.plan.deliverables), ['degradation_map', 'report']);
+  assert.equal(sdkWeb.executeBodies.length, before, '物化绝不能触发执行');
+  assert.equal(fakeNode.planCalls.length, 1);
+
+  const bad = await api('/api/recipes/plan', { method: 'POST', token: adminToken,
+    body: { recipe: 'recipe://geonexus/sdg-15-3-1@1.0.0', params: { year: 1999 }, nodeUrl: fakeNodeUrl } });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.data.code, 2006);
+  assert.equal(bad.data.field, 'year');
+  assert.equal(bad.data.detail.code, 'param_out_of_range');
+
+  const missing = await api('/api/recipes/plan', { method: 'POST', token: adminToken,
+    body: { recipe: 'recipe://geonexus/sdg-15-3-1@1.0.0', params: {}, nodeUrl: fakeNodeUrl } });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.data.field, 'year');
+
+  const missingRecipe = await api('/api/recipes/plan', { method: 'POST', token: adminToken,
+    body: { recipe: 'recipe://geonexus/nope', params: {}, nodeUrl: fakeNodeUrl } });
+  assert.equal(missingRecipe.status, 404);
+  assert.equal(missingRecipe.data.code, 2005);
+});
+
+test('方案：fork 产生新地址与新参数，源方案不动', async () => {
+  const res = await api('/api/recipes/fork', { method: 'POST', token: adminToken, body: {
+    recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0',
+    namespace: 'muyang', name: 'sdg-15-3-1-mexico', title: 'SDG 15.3.1 墨西哥 2019',
+    params: { year: 2019, region: '墨西哥' }, bbox: [110.4, 14.5, 117.1, 32.7],
+    temporal: { start: '2019-01-01', end: '2019-12-31' }
+  } });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.forked.id, 'recipe://muyang/sdg-15-3-1-mexico@1.0.0');
+  assert.equal(res.data.binding.status, 'pending', '派生件也要过审，默认待审');
+  assert.equal(res.data.binding.parentRecipeId, 'recipe://geonexus/sdg-15-3-1@1.0.0');
+  assert.equal(res.data.binding.params.region, '墨西哥');
+  assert.equal(res.data.caseId.startsWith('case-'), true, '复用者拿到的是自己的案例');
+  // 契约快照落在平台上：前端不必每次去问 SDK 才能画出参数表单
+  const names = res.data.binding.paramContract.map((c) => `${c.name}:${c.scope}`);
+  assert.deepEqual(names, ['year:reusable', 'region:reusable', 'baseline:fixed']);
+
+  // 源方案在目录里没有被改写
+  const source = await api('/api/recipes?all=true');
+  const src = source.data.items.find((r) => r.id === 'recipe://geonexus/sdg-15-3-1@1.0.0');
+  assert.ok(src);
+  const forked = source.data.items.find((r) => r.recipeId === 'recipe://muyang/sdg-15-3-1-mexico@1.0.0');
+  assert.equal(forked.status, 'pending');
+  // 目录里的同一份方案标为 bound，而不是被绑定遮蔽掉
+  const catalogued = source.data.items.find((r) => r.id === 'recipe://muyang/sdg-15-3-1-mexico@1.0.0');
+  assert.equal(catalogued.bound, true);
+
+  // 不认识的参数要拒（不是静默忽略）
+  const unknown = await api('/api/recipes/fork', { method: 'POST', token: adminToken,
+    body: { recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0', params: { crs: 'EPSG:4326' } } });
+  assert.equal(unknown.status, 422);
+
+  const missing = await api('/api/recipes/fork', { method: 'POST', token: adminToken,
+    body: { recipe_id: 'recipe://geonexus/does-not-exist' } });
+  assert.equal(missing.status, 404);
+});
+
+test('验收：2 数据 + 1 算子 + 1 报告 —— fork → 改参数 → 重跑 → 交付物可下载', async () => {
+  // 1) 派生一份自己的方案（复用别人的方法，改自己的参数）
+  const forked = await api('/api/recipes/fork', { method: 'POST', token: adminToken, body: {
+    recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0', namespace: 'acceptance',
+    name: 'sdg-mexico-2021', title: '墨西哥土地退化 2021',
+    params: { year: 2021, region: '墨西哥' }, bbox: [110.4, 14.5, 117.1, 32.7],
+    temporal: { start: '2021-01-01', end: '2021-12-31' }
+  } });
+  assert.equal(forked.status, 201);
+  const caseId = forked.data.caseId;
+
+  // 2) 未发布的案例不能跑（草稿不是"可复现"的）
+  const tooEarly = await api('/api/recipes/run', { method: 'POST', token: adminToken,
+    body: { caseId, params: { year: 2021 }, nodeUrl: fakeNodeUrl } });
+  assert.equal(tooEarly.status, 409);
+
+  // 3) 发布后重跑：顺序与取值全部来自身份 SDK 的任务图
+  const published = await api(`/api/cases/${caseId}`, { method: 'PUT', token: adminToken,
+    body: { title: '墨西哥土地退化 2021', status: 'published' } });
+  assert.equal(published.status, 200);
+
+  const executed = await api('/api/recipes/run', { method: 'POST', token: adminToken,
+    body: { caseId, params: { year: 2021 }, runId: 'acc-1', nodeUrl: fakeNodeUrl } });
+  assert.equal(executed.status, 202, JSON.stringify(executed.data));
+  assert.deepEqual(executed.data.steps.map((s) => s.step), ['s1', 's2', 's3']);
+  assert.ok(executed.data.steps.every((s) => s.status === 'succeeded'));
+
+  // 每一步都真的提交给了执行面，且上游产物按方案的 step:// 引用传到下一步
+  const bodies = sdkWeb.executeBodies.slice(-3);
+  assert.deepEqual(bodies.map((b) => b.skill), ['sdg-aoi', 'sdg-degrade', 'sdg-report']);
+  assert.equal(bodies[0].params.region, '墨西哥');
+  assert.equal(bodies[1].params.year, 2021, '参数取值来自本次运行的入参');
+  assert.equal(bodies[1].params.baseline, 2015, 'fixed 参数由作者钉死');
+  assert.equal(bodies[1].params.mask.endsWith('mask.tif'), true, 'step://s1/mask 应解析成 s1 的产物');
+  assert.equal(bodies[2].params.degradation.endsWith('degradation.tif'), true);
+
+  // 4) 交付物：方案"结论"的集合（退化栅格 + 报告），不是每一步的副产品。
+  //    中间产物（掩膜、转移矩阵）留在运行记录里，但只有 outputs 声明过的才算交付。
+  const deliverables = await api(`/api/cases/${caseId}/deliverables`, { token: adminToken });
+  assert.equal(deliverables.data.count, 2, JSON.stringify(deliverables.data.items));
+  assert.deepEqual(deliverables.data.items.map((d) => d.name).sort(), ['degradation_map', 'report']);
+  const byName = Object.fromEntries(deliverables.data.items.map((d) => [d.name, d]));
+  assert.equal(byName.degradation_map.role, 'data');
+  assert.equal(byName.degradation_map.stepId, 's2');
+  assert.equal(byName.degradation_map.status, 'ready');
+  assert.equal(byName.report.role, 'knowledge');
+  assert.equal(byName.report.mediaType, 'text/html');
+
+  // 5) 报告可下载（受控读取：白名单根目录内才放行）
+  const reportRes = await fetch(`${base}/api/deliverables/${byName.report.id}/report`,
+    { headers: { authorization: `Bearer ${adminToken}` } });
+  assert.equal(reportRes.status, 200);
+  assert.equal(reportRes.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.match(await reportRes.text(), /SDG 15\.3\.1/);
+  assert.equal((await fetch(`${base}/api/deliverables/${byName.report.id}/report`)).status, 401, '交付物下载要登录');
+
+  // 6) 图层视图：四级 LOD + 双时间轴（数据时间 ≠ 执行时间）
+  const layers = await api(`/api/cases/${caseId}/layers`);
+  assert.equal(layers.status, 200);
+  const view = layers.data.view;
+  assert.equal(view.spatial, true);
+  assert.deepEqual(view.bbox, [110.4, 14.5, 117.1, 32.7]);
+  assert.deepEqual(view.layers.map((l) => l.level), ['L1', 'L2', 'L3', 'L4']);
+  assert.equal(view.layers[0].kind, 'aoi');
+  assert.deepEqual(view.layers[1].steps.map((s) => s.stepId), ['s1', 's2', 's3']);
+  assert.equal(view.layers[1].playback, true);
+  assert.deepEqual(view.layers[2].groups.map((g) => g.role).sort(), ['data', 'knowledge']);
+  assert.equal(view.layers[3].available, true);
+  assert.equal(view.timeline.dataTime.start, '2021-01-01');
+  assert.ok(view.timeline.executionTime.start);
+  assert.equal(view.recipe.recipeId, 'recipe://acceptance/sdg-mexico-2021@1.0.0');
+  assert.deepEqual(view.recipe.params.region, '墨西哥');
+
+  // 7) 换一组参数再跑一次：两次运行互不覆盖，交付物按运行分开
+  const rerun = await api('/api/recipes/run', { method: 'POST', token: adminToken,
+    body: { caseId, params: { year: 2019 }, runId: 'acc-2', nodeUrl: fakeNodeUrl } });
+  assert.equal(rerun.status, 202);
+  const again = await api(`/api/cases/${caseId}/deliverables`, { token: adminToken });
+  assert.equal(again.data.count, 4, '第二次运行产生新的一批交付物，不覆盖第一次');
+  assert.equal((await api('/api/recipes/run', { method: 'POST', token: adminToken,
+    body: { caseId, params: { year: 1990 }, nodeUrl: fakeNodeUrl } })).status, 400, '越界参数在物化阶段就被拒');
+  assert.equal((await api('/api/recipes/run', { method: 'POST',
+    body: { caseId, params: { year: 2019 }, nodeUrl: fakeNodeUrl } })).status, 401, '未登录不能运行方案');
+});
+
+test('非空间案例：没有 bbox 就不上地球，但图层视图依然可用', async () => {
+  const created = await api('/api/cases', { method: 'POST', token: adminToken, body: {
+    title: '非空间：指标口径说明', status: 'published', provenance: 'archival'
+  } });
+  const view = await api(`/api/cases/${created.data.item.id}/layers`);
+  assert.equal(view.status, 200);
+  assert.equal(view.data.view.spatial, false, '没有 bbox 就要老实说，不能硬塞到地球上');
+  assert.equal(view.data.view.bbox, null);
+  assert.deepEqual(view.data.view.layers.map((l) => l.level), ['L2', 'L3', 'L4']);
+  assert.equal((await api('/api/cases/case-does-not-exist/layers')).status, 404);
+});
+
+test('未绑定方案的案例不能跑；SDK 掉线时目录降级但平台数据仍在', async () => {
+  const created = await api('/api/cases', { method: 'POST', token: adminToken, body: {
+    title: '只有 runSpec 的旧案例', status: 'published',
+    runSpec: { skill: 'ndvi-analysis', params: {} }
+  } });
+  const noBinding = await api('/api/recipes/run', { method: 'POST', token: adminToken,
+    body: { caseId: created.data.item.id, nodeUrl: fakeNodeUrl } });
+  assert.equal(noBinding.status, 422);
+  assert.match(noBinding.data.error, /方案/);
+
+  // 目录里一份方案都没有时：平台侧绑定**不能跟着消失**，而且要说清目录是空的。
+  const original = registry.recipes;
+  registry.recipes = new Map();
+  const catalogue = await api('/api/recipes');
+  assert.equal(catalogue.status, 200);
+  assert.equal(catalogue.data.sdk.status, 'up');
+  assert.equal(catalogue.data.catalogueCount, 0);
+  assert.equal(catalogue.data.items.some((r) => r.recipeId === 'recipe://acceptance/sdg-mexico-2021@1.0.0'), true,
+    '平台记录的案例配方不因 SDK 目录为空而消失');
+  registry.recipes = original;
 });

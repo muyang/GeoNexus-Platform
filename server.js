@@ -7,6 +7,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createSdkClient } = require('./lib/sdk-client');
 const { createGovernance } = require('./lib/governance');
 const { createSdkWebClient } = require('./lib/sdk-web-client');
+const { createRecipeClient } = require('./lib/recipe-client');
 const { createJwtVerifier } = require('./lib/jwt-verify');
 
 const ROOT = __dirname;
@@ -1915,8 +1916,10 @@ function listen(port) {
     setInterval(() => jwtVerifier.refresh(), 10 * 60 * 1000).unref();
   });
   const sdkWeb = createSdkWebClient();
+  // 方案（Recipe）：目录在 SDK Registry，物化在 GeoNode（geo.plan）。见 lib/recipe-client.js
+  const recipes = createRecipeClient();
   const governance = createGovernance({
-    db, send, readBody, requireAuth, getAuthUser, sdk, sdkWeb, uploadsDir: UPLOADS_DIR, nowIso,
+    db, send, readBody, requireAuth, getAuthUser, sdk, sdkWeb, recipes, uploadsDir: UPLOADS_DIR, nowIso,
     logger: (msg) => console.error(`[governance] ${msg}`)
   });
 
