@@ -68,8 +68,26 @@
 | GET | `/api/cases/:id/deliverables` | 该案例的交付物清单 |
 | GET | `/api/deliverables/:id` | 交付物元数据（**不含磁盘路径**） |
 | GET | `/api/deliverables/:id/report` | 需登录；按白名单受控读取产物文件（文本类自动补 `charset=utf-8`） |
+| GET | `/api/admin/recipes` | 后台「方案」页签：绑定 + SDK 目录 + 待审计数（需 `approval:list`） |
+| GET | `/api/admin/deliverables` | 后台「交付物」页签：清单 + 角色统计（需 `approval:list`） |
 
-落地约定（都有测试钉住，见 `tests/api.test.mjs` 的「方案」与「验收」两组）：
+**发布与审批（批 2）**：发布方案 = 提交一张 `recipe-publish` 审批单，与 GeoCard 发布
+完全同一条链路 —— SDK 侧 pending，平台侧 pending，裁决时平台把决定转发给 SDK，
+并把结果同步回平台绑定（`case_recipes.status`）。派生（fork）同样默认生成审批单：
+派生件要过审才能被运行（`geo.plan` 只物化已批准的方案）。
+
+**可见性继承（批 2）**：组合案例的可见性 = 其**承载内容的组成项**里最严的一档
+（规则见 `lib/visibility.js`，与 SDK 的 `geonexus/geocard/visibility.py` 同源）。
+两条不可动摇的约定：组成项解析不到 ⇒ 整案不可见；对外统一返回 **404，不是 403**
+（403 等于承认"存在一个你看不到的案例"）。案例列表里也不出现被挡的条目，
+只把 `hidden` 计数给管理员。被挡的访问会在审计里留下 `case.hidden`（含档位与
+`granted`），供运维排查"为什么这个案例不见了"。
+
+**后台页签（批 2）**：`GET /api/admin/recipes`（绑定 + 目录 + 待审计数）与
+`GET /api/admin/deliverables`（按角色统计），对应后台「方案」「交付物」两个页签，
+均需 `approval:list`。
+
+落地约定（都有测试钉住，见 `tests/api.test.mjs` 的「方案」「可见性」「后台」三组）：
 
 - **派生件默认待审**：`fork` 出的方案与它派生的案例都是草稿态，未发布不能运行（409）。
 - **参数只在 SDK 判定**：`param_out_of_range` / `param_missing` 等由 SDK 返回，平台翻译成
@@ -116,6 +134,7 @@ ADMIN_EMAILS=demo@local node server.js
 | `REGISTRY_URL` | `http://127.0.0.1:8790` | SDK Registry 地址（卡片目录 **与方案目录**） |
 | `SDK_NODE_URL` | `http://127.0.0.1:8787` | GeoNode 地址：`geo.plan` 物化方案的入口 |
 | `ARTIFACT_ROOTS` | `UPLOADS_DIR:SDK_WORKDIR` | 交付物/产物可读取的根目录白名单（冒号分隔） |
+| `ADMIN_EMAILS` | 空 | 管理员引导；只有管理员（或带 `visibility:*` scope）能看到受限/敏感案例 |
 | `SDK_REGISTRY_API_KEY` | 空 | 转发为 `X-API-Key`（注册中心配了 key 时必填） |
 | `ADMIN_EMAILS` | 空 | 管理员引导 |
 | `DATA_DIR` / `UPLOADS_DIR` / `SEED_PATH` | 仓库内 | 可覆盖，测试用隔离目录；种子文件缺失不再导致启动失败 |

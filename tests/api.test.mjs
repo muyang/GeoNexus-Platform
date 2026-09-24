@@ -55,6 +55,8 @@ function fixtureRecipe({ region = '蒙古', year = null, scope = 'reusable' } = 
       { id: 's3', kind: 'skill', uses: 'sdg-report', depends_on: ['s2'], inputs: { degradation: 'step://s2/degradation' }, outputs: { report: '报告' } }
     ],
     entrypoint: 's1',
+    // 方案声明的数据依赖：可见性继承要看的正是这些"承载内容"的组成项
+    requires: ['geocard.packed.menggu', 'geocard.oge.lc08-l2'],
     outputs: [
       { name: 'degradation_map', from: 's2.degradation', role: 'data', media_type: 'image/tiff' },
       { name: 'report', from: 's3.report', role: 'knowledge', media_type: 'text/html' }
@@ -975,6 +977,24 @@ test('地图设置：只有管理员能改，且校验取值', async () => {
 //  平台不复制参数契约、不自己排 DAG：这两件事都问 SDK（这里是假节点）。
 // ══════════════════════════════════════════════════════════════════════════
 let fakeNodeUrl;
+
+/** 登记方案引用到的组成项：算子（skill，不参与可见性）+ 数据（data，参与可见性）。 */
+function seedComponentCards(sensitivity = 'public', { dataSensitivity = null } = {}) {
+  const put = (id, type, level, replace = false) => {
+    if (registry.cards.has(id) && !replace) return;
+    registry.cards.set(id, {
+      card: { id, type, name: id, description: type === 'skill' ? '算子' : '数据',
+        compliance: { sensitivity: level } },
+      node_url: 'http://node-a', registered_at: new Date().toISOString(), status: 'approved',
+      review_note: null, review_history: [], submitted_by: null
+    });
+  };
+  for (const id of ['sdg-aoi', 'sdg-degrade', 'sdg-report']) put(id, 'skill', sensitivity, true);
+  for (const id of ['geocard.packed.menggu', 'geocard.oge.lc08-l2']) {
+    put(id, 'data', dataSensitivity || sensitivity, true);
+  }
+}
+
 test('方案：目录只列已批准的，并标出 SDK 状态', async () => {
   fakeNodeUrl = `http://127.0.0.1:${platform.nodeServer.address().port}`;
   const res = await api('/api/recipes');
@@ -991,17 +1011,27 @@ test('方案：目录只列已批准的，并标出 SDK 状态', async () => {
   assert.equal((await api('/api/recipes?param=crs')).data.items.length, 0);
   assert.equal((await api('/api/recipes?role=knowledge')).data.items.length >= 1, true);
 
-  // 提交一份新方案：默认进待审队列，未批准就不该出现在"可复用"里
+  // 发布方案 = 提交一张审批单（与 GeoCard 发布同一条链路）
   const submitted = await api('/api/recipes', { method: 'POST', token: adminToken,
     body: { recipe: { ...fixtureRecipe(), id: 'recipe://muyang/draft@0.1.0' } } });
   assert.equal(submitted.status, 201);
-  assert.equal(submitted.data.submitted.entry.status, 'pending');
+  assert.equal(submitted.data.approval.kind, 'recipe-publish');
+  assert.equal(submitted.data.approval.subjectId, 'recipe://muyang/draft@0.1.0');
+  assert.equal(submitted.data.approval.status, 'pending');
+  assert.equal(submitted.data.approval.sdkState, 'pending', 'SDK 侧也应是 pending');
   const after = await api('/api/recipes');
   assert.equal(after.data.items.some((r) => r.id === 'recipe://muyang/draft@0.1.0'), false);
   assert.equal((await api('/api/recipes?all=true')).data.items.some((r) => r.id === 'recipe://muyang/draft@0.1.0'), true);
   // 公众不能提交（需要 geocard:publish）
   assert.equal((await api('/api/recipes', { method: 'POST', token: publicToken,
     body: { recipe: fixtureRecipe() } })).status, 403);
+  // 裁决把决定转发给 SDK：批准后方案才真正可复用
+  const decided = await api(`/api/approvals/${submitted.data.approval.id}/decide`, { method: 'POST',
+    token: adminToken, body: { decision: 'approve', note: '口径已核对' } });
+  assert.equal(decided.status, 200);
+  assert.equal(decided.data.item.status, 'approved');
+  assert.equal(decided.data.item.sdkState, 'approved');
+  assert.equal(registry.recipes.get('recipe://muyang/draft@0.1.0').status, 'approved');
 });
 
 test('方案：物化不执行，参数契约错误带字段名回来', async () => {
@@ -1083,12 +1113,30 @@ test('验收：2 数据 + 1 算子 + 1 报告 —— fork → 改参数 → 重�
   assert.equal(forked.status, 201);
   const caseId = forked.data.caseId;
 
-  // 2) 未发布的案例不能跑（草稿不是"可复现"的）
+  // 2) 派生件默认待审，而且审批入口就在平台的"审批"里（与 GeoCard 发布同一条链路）
+  assert.equal(forked.data.binding.status, 'pending');
+  assert.equal(forked.data.approval.kind, 'recipe-publish');
+  assert.equal(forked.data.approval.subjectId, forked.data.forked.id);
+  assert.equal(forked.data.approval.status, 'pending');
+  assert.equal(registry.recipes.get(forked.data.forked.id).status, 'pending');
+
+  // 组成项必须在目录里可见：组合案例的可见性由组成项决定（见下一个用例）
+  seedComponentCards();
+
+  // 3) 未发布的案例不能跑（草稿不是"可复现"的）
   const tooEarly = await api('/api/recipes/run', { method: 'POST', token: adminToken,
     body: { caseId, params: { year: 2021 }, nodeUrl: fakeNodeUrl } });
   assert.equal(tooEarly.status, 409);
 
-  // 3) 发布后重跑：顺序与取值全部来自身份 SDK 的任务图
+  // 4) 审批通过 → SDK 侧 approved → 案例发布 → 才轮到"跑"
+  const approvedFork = await api(`/api/approvals/${forked.data.approval.id}/decide`, {
+    method: 'POST', token: adminToken, body: { decision: 'approve', note: '验收：口径已核对' } });
+  assert.equal(approvedFork.status, 200);
+  assert.equal(registry.recipes.get(forked.data.forked.id).status, 'approved');
+  const bindingRow = (await api('/api/admin/recipes', { token: adminToken })).data.bindings
+    .find((b) => b.id === forked.data.binding.id);
+  assert.equal(bindingRow.status, 'approved', '平台侧绑定要跟着审批结果走');
+
   const published = await api(`/api/cases/${caseId}`, { method: 'PUT', token: adminToken,
     body: { title: '墨西哥土地退化 2021', status: 'published' } });
   assert.equal(published.status, 200);
@@ -1189,4 +1237,133 @@ test('未绑定方案的案例不能跑；SDK 掉线时目录降级但平台数�
   assert.equal(catalogue.data.items.some((r) => r.recipeId === 'recipe://acceptance/sdg-mexico-2021@1.0.0'), true,
     '平台记录的案例配方不因 SDK 目录为空而消失');
   registry.recipes = original;
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  可见性继承：组合案例不能成为绕过访问控制的捷径
+// ══════════════════════════════════════════════════════════════════════════
+test('可见性：组成项受限 ⇒ 整案对外 404（对管理员仍可见）', async () => {
+  // 一个"公开"的案例，其中一个组成算子是 restricted
+  const foo = await api('/api/recipes/fork', { method: 'POST', token: adminToken, body: {
+    recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0', namespace: 'vis', name: 'restricted-demo',
+    params: { year: 2019 }, bbox: [100, 20, 110, 30]
+  } });
+  assert.equal(foo.status, 201);
+  const caseId = foo.data.caseId;
+  await api(`/api/cases/${caseId}`, { method: 'PUT', token: adminToken,
+    body: { title: '含受限算子的案例', status: 'published' } });
+
+  // 起初组成项都是 public → 访客可见
+  seedComponentCards('public');
+  assert.equal((await api(`/api/cases/${caseId}`)).status, 200, '组成项全公开时访客应能看到');
+  assert.equal((await api(`/api/cases/${caseId}/layers`)).status, 200);
+
+  // 把其中一份**数据**降为 restricted → 组合的最严值就是 restricted
+  // （改算子不会影响可见性：算子不承载内容，见 lib/visibility.js 的 GATING_ROLES）
+  seedComponentCards('public', { dataSensitivity: 'restricted' });
+  const anonymous = await api(`/api/cases/${caseId}`);
+  assert.equal(anonymous.status, 404, '组成项受限时对外必须是 404，不能是 403');
+  assert.equal(anonymous.data.error, '案例不存在', '不能透露"存在但你看不到"');
+  assert.equal((await api(`/api/cases/${caseId}/layers`)).status, 404);
+  assert.equal((await api(`/api/cases/${caseId}/deliverables`)).status, 404);
+
+  // 列表里也不该出现（连"有个隐藏案例"都别暗示）
+  const list = await api('/api/cases');
+  assert.equal(list.data.items.some((i) => i.id === caseId), false);
+  assert.ok(list.data.hidden >= 1, '隐藏了多少条要能对管理员说清楚');
+  const sdkCases = await api('/api/sdk/cases');
+  assert.equal(sdkCases.data.items.some((i) => i.id === caseId), false);
+
+  // 管理员通配：同一份数据他看得到，并且能看到被挡的原因留在审计里
+  assert.equal((await api(`/api/cases/${caseId}`, { token: adminToken })).status, 200);
+  assert.equal((await api(`/api/cases/${caseId}/layers`, { token: adminToken })).data.view.visibility.visibility,
+    'restricted');
+  const audit = await api('/api/admin/audit?limit=50', { token: adminToken });
+  const denied = audit.data.items.find((a) => a.action === 'case.hidden' && a.subject === caseId);
+  assert.ok(denied, '被挡的访问要留审计');
+  const detail = typeof denied.detail === 'string' ? JSON.parse(denied.detail) : denied.detail;
+  assert.equal(detail.missing.length, 0, '这不是"解析不到"，是"档位不够"');
+  assert.equal(detail.levels['geocard.packed.menggu'], 'restricted');
+  assert.equal(detail.levels['sdg-aoi'], undefined, '算子不参与可见性判定，不该出现在 levels 里');
+  assert.deepEqual(detail.granted, ['public']);
+
+  // 有 visibility:restricted scope 的用户能看（登录默认就有）；sensitive 需要显式授权
+  const okUser = await api('/api/cases/' + caseId, { token: publicToken });
+  assert.equal(okUser.status, 200, '登录用户默认能看 restricted');
+  seedComponentCards('public', { dataSensitivity: 'sensitive' });
+  assert.equal((await api(`/api/cases/${caseId}`, { token: publicToken })).status, 404);
+  grant('public@test.local', ['public_visitor'], ['earth:view', 'card:read', 'case:read', 'visibility:sensitive'], platform.dataDir);
+  // 已登录令牌的 scopes 是签发时写进 users 表的，重新登录才生效
+  const again = await api('/api/auth/login', { method: 'POST',
+    body: { email: 'public@test.local', password: 'pw-public-123' } });
+  assert.equal((await api(`/api/cases/${caseId}`, { token: again.data.token })).status, 200);
+
+  // 收尾：恢复公开，避免影响后续用例
+  seedComponentCards('public');
+  assert.equal((await api(`/api/cases/${caseId}`)).status, 200);
+});
+
+test('可见性：组成项解析不到 ⇒ 整案不可见（不存在与无权同等对待）', async () => {
+  const foo = await api('/api/recipes/fork', { method: 'POST', token: adminToken, body: {
+    recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0', namespace: 'vis', name: 'missing-demo',
+    params: { year: 2019 }
+  } });
+  const caseId = foo.data.caseId;
+  await api(`/api/cases/${caseId}`, { method: 'PUT', token: adminToken, body: { status: 'published' } });
+
+  // 目录里没有任何组成项：既可能是没登记，也可能是无权看 —— 对调用方是同一件事
+  const saved = new Map(registry.cards);
+  registry.cards.clear();   // 数据卡片都没了：既可能没登记，也可能无权看
+  assert.equal((await api(`/api/cases/${caseId}`)).status, 404);
+  assert.equal((await api(`/api/cases/${caseId}`, { token: adminToken })).status, 404, '管理员也不能看"来源不明"的组合');
+  registry.cards = saved;
+  seedComponentCards('public');
+  assert.equal((await api(`/api/cases/${caseId}`, { token: adminToken })).status, 200);
+});
+
+test('可见性：可选组成项缺席不影响可见性（作者已声明缺了也能跑）', async () => {
+  // 平台侧规则由 lib/visibility.js 提供，直接用它的测试钉住边界
+  const { evaluateVisibility, composeVisibility, normalizeVisibility, canSee } = await import('../lib/visibility.js');
+  // 全是 public 就该是 public —— 不能因为"默认档是 restricted"而被抬高
+  assert.equal(composeVisibility(['public', 'public']), 'public');
+  assert.equal(composeVisibility([]), 'restricted');
+  assert.equal(normalizeVisibility(undefined), 'restricted');
+  assert.equal(normalizeVisibility('top-secret'), 'secret');
+  assert.equal(evaluateVisibility({ own: 'public', components: [
+    { id: 'a', visibility: 'public' }, { id: 'b', visibility: null, required: false }
+  ] }).visible, true, '可选组成项解析不到不该挡住整案');
+  assert.equal(evaluateVisibility({ own: 'public', components: [
+    { id: 'a', visibility: 'public' }, { id: 'b', visibility: null }
+  ] }).visible, false);
+  assert.equal(canSee('sensitive', ['restricted']), false);
+  assert.equal(canSee('sensitive', ['sensitive']), true);
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  后台：方案 / 交付物 两个管理页签的数据面
+// ══════════════════════════════════════════════════════════════════════════
+test('后台方案页签：绑定 + 目录 + 待审计数；交付物页签：按角色统计', async () => {
+  const recipesView = await api('/api/admin/recipes', { token: adminToken });
+  assert.equal(recipesView.status, 200);
+  assert.ok(recipesView.data.bindingCount >= 1);
+  assert.ok(recipesView.data.catalogueCount >= 1, '目录来自 SDK');
+  assert.equal(recipesView.data.sdk.status, 'up');
+  const binding = recipesView.data.bindings[0];
+  for (const key of ['id', 'caseId', 'recipeId', 'params', 'status', 'steps', 'reusableParams', 'fixedParams', 'deliverables']) {
+    assert.ok(key in binding, `绑定视图缺少 ${key}`);
+  }
+  assert.equal(typeof recipesView.data.pendingApprovals, 'number');
+
+  const deliverablesView = await api('/api/admin/deliverables', { token: adminToken });
+  assert.equal(deliverablesView.status, 200);
+  assert.ok(deliverablesView.data.count >= 1);
+  assert.ok(deliverablesView.data.byRole.knowledge >= 1);
+  assert.ok(deliverablesView.data.runs >= 1);
+  const knowledgeOnly = await api('/api/admin/deliverables?role=knowledge', { token: adminToken });
+  assert.equal(knowledgeOnly.data.items.every((d) => d.role === 'knowledge'), true);
+
+  // 管理面鉴权：公众不得访问（需要 approval:list）
+  assert.equal((await api('/api/admin/recipes', { token: publicToken })).status, 403);
+  assert.equal((await api('/api/admin/deliverables', { token: publicToken })).status, 403);
+  assert.equal((await api('/api/admin/recipes')).status, 401);
 });
