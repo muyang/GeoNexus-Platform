@@ -67,7 +67,20 @@ export const caseApi = {
   runDetail: (runId) => get(`/api/runs/${encodeURIComponent(runId)}`),
   cancelRun: (runId) => post(`/api/runs/${encodeURIComponent(runId)}/cancel`),
   /** 产物地址：SDK 不提供文件服务，由平台受控转发（白名单根目录）。 */
-  artifactUrl: (runId, name) => `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`
+  artifactUrl: (runId, name) => `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`,
+
+  // ── 方案（Recipe）与交付物：复用链路的前端入口 ──
+  /** 四级 LOD + 双时间轴 + 组成项（含 bbox）——画法由前端决定。 */
+  layers: (caseId) => get(`/api/cases/${encodeURIComponent(caseId)}/layers`),
+  deliverables: (caseId) => get(`/api/cases/${encodeURIComponent(caseId)}/deliverables`),
+  /** 交付物报告：受控读取，需登录（浏览器直接打开即可）。 */
+  deliverableReportUrl: (id) => `/api/deliverables/${encodeURIComponent(id)}/report`,
+  /** 派生一份方案：新地址 + 我的参数，源方案不动；派生件默认待审。 */
+  forkRecipe: (body) => post('/api/recipes/fork', body),
+  /** 只看不跑：参数不合格时后端回 400 且带 field（前端据此高亮输入框）。 */
+  planRecipe: (body) => post('/api/recipes/plan', body),
+  /** 按方案运行案例（逐级执行，产出交付物）。 */
+  runRecipe: (body) => post('/api/recipes/run', body)
 }
 
 export const workbenchApi = {

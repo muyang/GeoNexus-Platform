@@ -17,7 +17,8 @@ export function createMaplibreEngine(state, hooks = {}) {
   }
 
   const colorFor = (kind) => ({
-    data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90'
+    data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90',
+    workflow: '#7fe3ff', compute: '#9aa7c7'
   })[kind] || '#8fd3ff'
 
   const bboxRing = (bbox) => [[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]
@@ -117,6 +118,49 @@ export function createMaplibreEngine(state, hooks = {}) {
     if (m.isStyleLoaded()) draw(); else m.once('idle', draw)
   }
 
+  /** 案例叠加层：AOI（L1）+ 组成项范围 + 血缘弧线（默认关）。 */
+  function syncCaseOverlay(overlay, { provenance = false } = {}) {
+    const mp = map.value
+    if (!mp) return
+    const draw = () => {
+      for (const id of ['case-aoi', 'case-components', 'case-arcs']) {
+        if (mp.getLayer(`lyr-${id}`)) mp.removeLayer(`lyr-${id}`)
+        if (mp.getSource(`src-${id}`)) mp.removeSource(`src-${id}`)
+      }
+      if (!overlay) { document.documentElement.dataset.caseOverlay = '0'; return }
+      let drawn = 0
+      if (Array.isArray(overlay.aoi) && overlay.aoi.length === 4) {
+        mp.addSource('src-case-aoi', { type: 'geojson', data: { type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [bboxRing(overlay.aoi)] }, properties: {} } })
+        mp.addLayer({ id: 'lyr-case-aoi', type: 'fill', source: 'src-case-aoi',
+          paint: { 'fill-color': '#57d7ff', 'fill-opacity': 0.18, 'fill-outline-color': '#8fe6ff' } })
+        drawn += 1
+      }
+      const boxes = (overlay.components || []).filter((c) => Array.isArray(c.bbox) && c.bbox.length === 4)
+      if (boxes.length) {
+        mp.addSource('src-case-components', { type: 'geojson', data: { type: 'FeatureCollection',
+          features: boxes.map((c) => ({ type: 'Feature', properties: { role: c.role },
+            geometry: { type: 'Polygon', coordinates: [bboxRing(c.bbox)] } })) } })
+        mp.addLayer({ id: 'lyr-case-components', type: 'line', source: 'src-case-components',
+          paint: { 'line-color': '#ffc65c', 'line-width': 1 } })
+        drawn += boxes.length
+      }
+      if (provenance && Array.isArray(overlay.aoi)) {
+        const centre = [(overlay.aoi[0] + overlay.aoi[2]) / 2, (overlay.aoi[1] + overlay.aoi[3]) / 2]
+        mp.addSource('src-case-arcs', { type: 'geojson', data: { type: 'FeatureCollection',
+          features: boxes.map((c) => ({ type: 'Feature', properties: { role: c.role },
+            geometry: { type: 'LineString', coordinates: [
+              [(c.bbox[0] + c.bbox[2]) / 2, (c.bbox[1] + c.bbox[3]) / 2], centre] } })) } })
+        mp.addLayer({ id: 'lyr-case-arcs', type: 'line', source: 'src-case-arcs',
+          paint: { 'line-color': '#8fe6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] } })
+      }
+      document.documentElement.dataset.caseOverlay = String(drawn)
+    }
+    if (mp.isStyleLoaded()) draw(); else mp.once('idle', draw)
+  }
+
+  function clearCaseOverlay() { syncCaseOverlay(null) }
+
   function setVisible(id, visible) {
     const l = layers.value.find((x) => x.id === id); if (!l) return
     l.visible = visible
@@ -151,5 +195,5 @@ export function createMaplibreEngine(state, hooks = {}) {
     if (typeof window !== 'undefined') delete window.__gnxMap
   }
 
-  return { mount, destroy, syncLayers, redraw, setVisible, setOpacity, fit, fitAll, setBasemap, retryBasemap, colorFor, setProjection: () => {} }
+  return { mount, destroy, syncLayers, syncCaseOverlay, clearCaseOverlay, redraw, setVisible, setOpacity, fit, fitAll, setBasemap, retryBasemap, colorFor, setProjection: () => {} }
 }

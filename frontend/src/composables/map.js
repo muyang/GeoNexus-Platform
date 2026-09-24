@@ -29,8 +29,10 @@ const error = ref('')
 const tilestats = ref({ errors: 0, lastError: '' })
 const basemapId = ref(DEFAULT_BASEMAP)
 const layers = ref([])
+//: 当前选中的案例叠加层（切引擎时用来重放；默认 null = 不画）
+const caseOverlay = ref(null)
 
-const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers }
+const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, caseOverlay }
 const engines = { maplibre: createMaplibreEngine(state), cesium: createCesiumEngine(state) }
 const active = () => engines[engine.value] || engines.cesium
 
@@ -71,6 +73,7 @@ export function useMap() {
     engine.value = name
     ready.value = false; error.value = ''
     layers.value = []
+    caseOverlay.value = null
     if (container.value) await active().mount(container.value, { basemap: basemapId.value, projection: projection.value, homeView: homeView.value })
   }
 
@@ -91,12 +94,19 @@ export function useMap() {
     active().syncLayers(cards)
   }
 
+  /** 案例叠加层：与 GeoCard 图层分开，选中案例时才画。 */
+  function syncCaseOverlay(overlay, opts) {
+    caseOverlay.value = overlay || null
+    active().syncCaseOverlay?.(caseOverlay.value, opts)
+  }
+  function clearCaseOverlay() { caseOverlay.value = null; active().clearCaseOverlay?.() }
+
   return {
     // 状态
-    engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards,
+    engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards, caseOverlay,
     // 动作
     mount, destroy, setEngine, setProjection, loadSettings,
-    syncLayers,
+    syncLayers, syncCaseOverlay, clearCaseOverlay,
     setVisible: (id, v) => active().setVisible(id, v),
     setOpacity: (id, o) => active().setOpacity(id, o),
     fit: (b) => active().fit(b),

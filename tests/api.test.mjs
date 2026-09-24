@@ -1367,3 +1367,48 @@ test('后台方案页签：绑定 + 目录 + 待审计数；交付物页签：�
   assert.equal((await api('/api/admin/deliverables', { token: publicToken })).status, 403);
   assert.equal((await api('/api/admin/recipes')).status, 401);
 });
+
+test('案例编辑：可空字段能真的被清空（bbox/时间窗）', async () => {
+  const created = await api('/api/cases', { method: 'POST', token: adminToken,
+    body: { title: '可空字段', status: 'draft', bbox: [100, 20, 110, 30], temporal: { start: '2020-01-01' } } });
+  const id = created.data.item.id;
+  assert.deepEqual(created.data.item.bbox, [100, 20, 110, 30]);
+  // 显式传 null 表示"清空"，不是"没改"（?? 会把两者混为一谈）
+  const cleared = await api(`/api/cases/${id}`, { method: 'PUT', token: adminToken, body: { bbox: null } });
+  assert.equal(cleared.data.item.bbox, null);
+  // 局部提交：没提到的字段保持原样，标题也不用重复带一遍
+  assert.equal(cleared.data.item.title, '可空字段');
+  assert.deepEqual(cleared.data.item.temporal, { start: '2020-01-01' }, '没提到的字段不该被顺手清掉');
+  const clearedBoth = await api(`/api/cases/${id}`, { method: 'PUT', token: adminToken,
+    body: { temporal: null } });
+  assert.equal(clearedBoth.data.item.temporal, null);
+  await api(`/api/cases/${id}`, { method: 'DELETE', token: adminToken });
+});
+
+test('图层视图：组成项带 bbox（血缘弧线的两端）', async () => {
+  // 给数据卡片加上覆盖范围：案例范围 ↔ 提供数据的资产，血缘弧线才有两端
+  seedComponentCards('public');
+  for (const [id, bbox] of [['geocard.packed.menggu', [87.7, 41.6, 119.9, 52.1]],
+    ['geocard.oge.lc08-l2', [110.4, 14.5, 117.1, 32.7]]]) {
+    const entry = registry.cards.get(id);
+    entry.card.spatial = { bbox, crs: 'EPSG:4326' };
+    registry.cards.set(id, entry);
+  }
+  const foo = await api('/api/recipes/fork', { method: 'POST', token: adminToken, body: {
+    recipe_id: 'recipe://geonexus/sdg-15-3-1@1.0.0', namespace: 'viz', name: 'arcs',
+    params: { year: 2019 }, bbox: [100, 20, 120, 45]
+  } });
+  const caseId = foo.data.caseId;
+  await api(`/api/cases/${caseId}`, { method: 'PUT', token: adminToken, body: { status: 'published' } });
+
+  const view = (await api(`/api/cases/${caseId}/layers`)).data.view;
+  assert.equal(view.spatial, true);
+  const byId = Object.fromEntries(view.components.map((c) => [c.id, c]));
+  assert.equal(byId['geocard.packed.menggu'].role, 'data');
+  assert.deepEqual(byId['geocard.packed.menggu'].bbox, [87.7, 41.6, 119.9, 52.1]);
+  assert.equal(byId['geocard.packed.menggu'].visibility, 'public');
+  // 算子没有 bbox 也不该让视图失败：弧线只画得出来的那些
+  const operator = view.components.find((c) => c.role === 'skill');
+  assert.ok(operator, '算子在组成项里，但不参与可见性判定');
+  assert.equal(operator.bbox, null);
+});

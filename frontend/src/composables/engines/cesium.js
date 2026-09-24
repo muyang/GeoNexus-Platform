@@ -14,7 +14,8 @@ export function createCesiumEngine(state) {
   const TIMEOUT_MS = 12000
 
   const colorFor = (kind) => ({
-    data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90'
+    data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90',
+    workflow: '#7fe3ff', compute: '#9aa7c7'
   })[kind] || '#8fd3ff'
 
   async function loadCesium() {
@@ -96,6 +97,8 @@ export function createCesiumEngine(state) {
     try { p === '2d' ? viewer.scene.morphTo2D(1) : viewer.scene.morphTo3D(1) } catch { /* 忽略 */ }
   }
 
+  const caseEntities = new Map()
+
   function syncLayers(cards) {
     layers.value = (cards || [])
       .filter((c) => Array.isArray(c.bbox) && c.bbox.length === 4)
@@ -132,6 +135,66 @@ export function createCesiumEngine(state) {
     document.documentElement.dataset.mapLayers = String(layers.value.length)
   }
 
+  /** 案例叠加层：AOI 面（L1）、组成项（数据范围）、血缘弧线（默认关）。
+   *  与 GeoCard 图层分开管理：选中哪个案例只影响这一层，不重画整个目录。 */
+  function syncCaseOverlay(overlay, { provenance = false } = {}) {
+    const Cesium = CesiumMod
+    if (!viewer || !Cesium) return
+    for (const key of [...caseEntities.keys()]) {
+      const e = caseEntities.get(key)
+      try { viewer.entities.remove(e) } catch { /* 已移除 */ }
+      caseEntities.delete(key)
+    }
+    if (!overlay) { document.documentElement.dataset.caseOverlay = '0'; return }
+
+    const [w, s, e, n] = overlay.aoi || []
+    if (Array.isArray(overlay.aoi) && overlay.aoi.length === 4) {
+      caseEntities.set('aoi', viewer.entities.add({
+        id: 'case-aoi',
+        rectangle: {
+          coordinates: Cesium.Rectangle.fromDegrees(w, s, e, n),
+          material: toColor('#57d7ff', 0.22),
+          outline: true, outlineColor: toColor('#8fe6ff', 0.95), height: 0
+        }
+      }))
+    }
+
+    for (const component of overlay.components || []) {
+      if (!Array.isArray(component.bbox) || component.bbox.length !== 4) continue
+      const [cw, cs, ce, cn] = component.bbox
+      caseEntities.set(`component-${component.id}`, viewer.entities.add({
+        id: `case-component-${component.id}`,
+        rectangle: {
+          coordinates: Cesium.Rectangle.fromDegrees(cw, cs, ce, cn),
+          material: toColor(colorFor(component.role), 0.12),
+          outline: true, outlineColor: toColor(colorFor(component.role), 0.55), height: 0
+        }
+      }))
+    }
+
+    // 血缘弧线：默认**关**，按需开，而且只画当前选中的这一个案例。
+    if (provenance && Array.isArray(overlay.aoi)) {
+      const caseCentre = [(w + e) / 2, (s + n) / 2]
+      for (const component of overlay.components || []) {
+        if (!Array.isArray(component.bbox) || component.bbox.length !== 4) continue
+        const centre = [(component.bbox[0] + component.bbox[2]) / 2, (component.bbox[1] + component.bbox[3]) / 2]
+        caseEntities.set(`arc-${component.id}`, viewer.entities.add({
+          id: `case-arc-${component.id}`,
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+              centre[0], centre[1], 0, caseCentre[0], caseCentre[1], 800000, caseCentre[0], caseCentre[1], 0
+            ]),
+            width: 1.6,
+            material: toColor(colorFor(component.role), 0.7)
+          }
+        }))
+      }
+    }
+    document.documentElement.dataset.caseOverlay = String(caseEntities.size)
+  }
+
+  function clearCaseOverlay() { syncCaseOverlay(null) }
+
   function setVisible(id, visible) {
     const l = layers.value.find((x) => x.id === id); if (!l) return
     l.visible = visible
@@ -160,6 +223,7 @@ export function createCesiumEngine(state) {
 
   function destroy() {
     entityByLayer.clear()
+    caseEntities.clear()
     if (viewer) { try { viewer.destroy() } catch { /* 忽略 */ } }
     viewer = null
     ready.value = false; loading.value = false; slowBasemap.value = false
@@ -168,5 +232,6 @@ export function createCesiumEngine(state) {
 
   const retryBasemap = () => setBasemap(basemapId.value)
 
-  return { mount, destroy, syncLayers, setVisible, setOpacity, fit, fitAll, setBasemap, retryBasemap, colorFor, setProjection }
+  return { mount, destroy, syncLayers, syncCaseOverlay, clearCaseOverlay, setVisible, setOpacity, fit, fitAll,
+    setBasemap, retryBasemap, colorFor, setProjection }
 }

@@ -83,6 +83,18 @@
 只把 `hidden` 计数给管理员。被挡的访问会在审计里留下 `case.hidden`（含档位与
 `granted`），供运维排查"为什么这个案例不见了"。
 
+**可视化（批 3）**：`/api/cases/:id/layers` 是**数据面**，画法在前端
+（`frontend/src/composables/caseLayers.js` + 两个引擎的 `syncCaseOverlay`）：
+
+- **四级 LOD**：L1 案例 AOI 面 → L2 步骤足迹（可播放，按执行顺序）→ L3 图层组（交付物
+  按角色分组）→ L4 报告面板联动（在 L3 点开即展开 iframe）。
+- **双时间轴**：`timeline.dataTime`（案例研究的时段）与 `timeline.executionTime`
+  （哪一次运行）**分开画**。混在一根轴上，用户就分不清"结果变了"是数据换了还是重跑过。
+- **血缘弧线**：`components[]` 带 `bbox` 与 `visibility`。默认**关**——一开就是一堆线；
+  只画当前选中的那一个案例；两端都要有范围才画（算子没有 bbox 就不画）。
+- **非空间案例**：`spatial: false` 时不进地球（硬塞上去等于给出一个假位置），
+  只出现在侧栏；它的 L2/L3/L4 仍然可用。
+
 **后台页签（批 2）**：`GET /api/admin/recipes`（绑定 + 目录 + 待审计数）与
 `GET /api/admin/deliverables`（按角色统计），对应后台「方案」「交付物」两个页签，
 均需 `approval:list`。
@@ -99,6 +111,9 @@
   下载走 `ARTIFACT_ROOTS` 白名单（越界 403，与单技能复跑同一策略）。
 - **目录降级要说清**：SDK 目录不可达时，平台侧绑定照常返回，响应里的 `sdk.status`
   标成 `down` 并给出错误，不假装目录是空的。
+- **可空字段能真的被清空**：`bbox` / `temporal` / `sensitivity` 用"键是否存在"判断，
+  而不是 `??` —— 否则"显式传 null"会被当成"没改"，编辑者永远删不掉一个错的范围；
+  更新允许**局部**提交（只改一个字段不必带上整份案例，标题也不用重复给）。
 
 ### 总览与审计
 `GET /api/admin/overview`（计数 + SDK 状态）、`GET /api/admin/audit?limit=`（只追加）。
