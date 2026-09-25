@@ -350,7 +350,8 @@ function startPlatform({ registryUrl, adminEmails, sdkWebUrl, artifactRoots, jwk
     REGISTRY_URL: registryUrl, SDK_REGISTRY_API_KEY: API_KEY, ADMIN_EMAILS: adminEmails,
     SDK_WEB_URL: sdkWebUrl, SDK_WEB_USER: 'admin', SDK_WEB_PASSWORD: 'admin',
     // 单技能复跑仍打默认节点（既有用例断言了这个 node_url）；方案运行则显式传 nodeUrl
-    SDK_NODE_URL: 'http://127.0.0.1:8787', ARTIFACT_ROOTS: artifactRoots,
+    SDK_NODE_URL: 'http://127.0.0.1:8787',
+    ARTIFACT_ROOTS: `${artifactRoots}:${path.join(tmpDir, 'uploads')}`,
     // 测试要直接验证本进程的会话认证与治理面：把身份代理关掉（生产默认是代理到 Java）
     IDENTITY_BASE_URL: '',
     ...(jwksUrl ? { IDENTITY_JWKS_URL: jwksUrl } : {}) };
@@ -1411,4 +1412,76 @@ test('图层视图：组成项带 bbox（血缘弧线的两端）', async () => 
   const operator = view.components.find((c) => c.role === 'skill');
   assert.ok(operator, '算子在组成项里，但不参与可见性判定');
   assert.equal(operator.bbox, null);
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════
+//  候鸟—湿地案例：种子脚本 + 受控几何接口 + 可见性分层
+// ══════════════════════════════════════════════════════════════════════════
+const FLIGHTWAY_CASE = 'case-eaaf-wetland-priority';
+const CASE_DIR = path.resolve(ROOT, '..', '..', 'core', 'examples', 'flightway_wetland');
+
+async function seedFlightway(extra = []) {
+  // 测试文件是 ESM：用动态 import 拿 child_process（与其它用例同一写法）
+  const { execFileSync } = await import('node:child_process');
+  return execFileSync(process.execPath,
+    [path.join(ROOT, 'scripts', 'seed-flightway-case.mjs'), '--case-dir', CASE_DIR, ...extra],
+    { cwd: ROOT, env: { ...process.env, DATA_DIR: platform.dataDir,
+      UPLOADS_DIR: path.join(platform.dataDir, 'uploads') }, encoding: 'utf8' });
+}
+
+test('种子脚本：把候鸟—湿地案例种进平台（开箱可见）', async () => {
+  const out = await seedFlightway(['--public']);
+  assert.match(out, /已种入平台/);
+  const detail = await api(`/api/cases/${FLIGHTWAY_CASE}`);
+  assert.equal(detail.status, 200, '开放演示模式下访客应能看到案例');
+  assert.equal(detail.data.item.visibility, 'public');
+  const view = (await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).data.view;
+  assert.equal(view.spatial, true);
+  assert.deepEqual(view.bbox, [120.3, 32.6, 121.4, 33.4]);
+  // 组成项：4 个算子 + 3 份数据（含受限点位，图层视图从方案的 requires 推导）
+  const ids = view.components.map((c) => c.id);
+  assert.ok(ids.includes('geocard.eaaf.priority-sites-restricted'), '受限点位要在组成项里');
+  assert.ok(ids.includes('wetland-water-extent'));
+  // 几何清单由平台给出受控地址，前端不自己拼路径
+  assert.deepEqual(view.geometry.map((g) => g.name).sort(),
+    ['sites', 'water_baseline', 'water_change']);
+  assert.ok(view.geometry.every((g) => g.url.startsWith(`/api/cases/${FLIGHTWAY_CASE}/geometry/`)));
+});
+
+test('几何接口：受控读取、格式正确、越权与越界都要拒', async () => {
+  await seedFlightway(['--public']);
+  const res = await fetch(`${base}/api/cases/${FLIGHTWAY_CASE}/geometry/sites`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /geo\+json/);
+  const fc = await res.json();
+  assert.equal(fc.type, 'FeatureCollection');
+  assert.equal(fc.features.length, 8);
+  // 每个要素都带 synthetic：界面上的"合成为示意"标注从数据来
+  assert.ok(fc.features.every((f) => f.properties.synthetic === true));
+  const top = [...fc.features].sort((a, b) => b.properties.pc1 - a.properties.pc1)[0];
+  assert.ok(top.properties.pc1 > 0 && top.properties.pc1_band);
+  assert.ok(top.properties.species_meeting_1pct > 0);
+
+  // 不存在的几何 → 404（不是 500，也不是空文件）
+  assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/nope`)).status, 404);
+});
+
+test('可见性分层：受限点位在场时访客拿不到案例，也拿不到几何', async () => {
+  await seedFlightway([]);   // 默认模式：精确点位敏感度 restricted
+  const anonCase = await api(`/api/cases/${FLIGHTWAY_CASE}`);
+  assert.equal(anonCase.status, 404, '组合含受限组成项 ⇒ 对外不存在');
+  assert.equal(anonCase.data.error, '案例不存在');
+  assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).status, 404);
+  assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/sites`)).status, 404,
+    '几何与图层必须同一道门');
+  const list = await api('/api/cases');
+  assert.equal(list.data.items.some((i) => i.id === FLIGHTWAY_CASE), false);
+  // 管理员看得到，并能读出档位与原因
+  const adminView = await api(`/api/cases/${FLIGHTWAY_CASE}/layers`, { token: adminToken });
+  assert.equal(adminView.status, 200);
+  assert.equal(adminView.data.view.visibility.visibility, 'restricted');
+  assert.deepEqual(adminView.data.view.visibility.missing, []);
+  // 收尾：恢复开放演示，避免影响后续用例
+  await seedFlightway(['--public']);
 });
