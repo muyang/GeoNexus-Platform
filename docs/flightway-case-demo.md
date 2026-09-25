@@ -81,3 +81,4 @@ node scripts/seed-flightway-case.mjs     # 回到默认：含受限点位
 | 地球上看不到几何 | 几何文件不在 `ARTIFACT_ROOTS` 白名单内 | 启动平台时把 `uploads/` 加进 `ARTIFACT_ROOTS`（测试里就是这么做的） |
 | 面板出现「部分几何加载失败」 | 某一份 GeoJSON 取不到 | 看平台日志与 `uploads/cases/flightway/` 是否存在 |
 | 改了前端但页面没变 | 平台服务的是 `frontend/dist` 构建产物 | `cd frontend && npm run build` 后刷新 |
+| L4 报告面板空白或显示 401 | 交付物下载**需要登录**（产物是受控读取，与产物白名单同一策略） | 用管理员/机构账号登录后再点 ▤ |
