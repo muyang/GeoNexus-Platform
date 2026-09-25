@@ -43,7 +43,8 @@
 }
 
 /* 深色壳内的 Element Plus 变量对齐（弹窗/表格浮在地图上时必须也是玻璃） */
-html[data-shell="earth"] {
+html[data-shell="earth"],
+html[data-shell="app"] {
   --el-bg-color: var(--e-glass2);
   --el-bg-color-overlay: var(--e-glass2);
   --el-text-color-primary: var(--e-ink);

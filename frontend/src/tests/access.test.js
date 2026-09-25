@@ -56,10 +56,10 @@ describe('访问模型：游客可看 / 登录可用 / 授权才能管', () => {
   const byName = Object.fromEntries(routes.filter((r) => r.name).map((r) => [r.name, r]))
 
   // 这是本轮问题的回归闸门：浏览型页面一旦被标成需要登录，整站都会弹登录页
+  // 改版后是九模块（旧名作为重定向保留，不再是具名路由）：
+  // home/map/data/operators/compute/cases/community + 登录注册与 403
   const MUST_BE_PUBLIC = [
-    'earth-home', 'map', 'geocards', 'cases',
-    'portal-home', 'visual-earth', 'global-cases', 'data-resources', 'operator-models',
-    'compute-platform', 'open-community', 'super-agent', 'typical-apps',
+    'home', 'map', 'data', 'operators', 'compute', 'cases', 'community',
     'login', 'register', 'forbidden'
   ]
 
@@ -126,7 +126,8 @@ describe('路由与导航的一致性', () => {
 
   it('每个路由都声明了壳与标题键', () => {
     for (const r of routes.filter((x) => x.name)) {
-      expect(['portal', 'earth', 'blank']).toContain(r.meta.shell)
+      // app = 统一壳（九模块）；portal/earth 是尚未迁完的旧壳；blank 是登录页
+      expect(['app', 'portal', 'earth', 'blank']).toContain(r.meta.shell)
       if (r.name !== 'forbidden') expect(r.meta.titleKey).toBeTruthy()
     }
   })

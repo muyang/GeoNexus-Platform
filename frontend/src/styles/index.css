@@ -8,12 +8,15 @@ body { font-family: var(--font-cn); -webkit-font-smoothing: antialiased; }
 
 /* 两壳切换：由 App.vue 依据路由 meta.shell 写到 html[data-shell] */
 html[data-shell="portal"] body { background: var(--p-bg); color: var(--p-text); }
-html[data-shell="earth"] body { background: var(--e-bg); color: var(--e-ink); }
+html[data-shell="earth"] body,
+html[data-shell="app"] body { background: var(--e-bg); color: var(--e-ink); }
 
 .mono { font-family: var(--font-mono); }
 .dim { color: var(--p-soft); }
-html[data-shell="earth"] .dim { color: var(--e-dim); }
+html[data-shell="earth"] .dim,
+html[data-shell="app"] .dim { color: var(--e-dim); }
 
 /* 无障碍：可聚焦元素统一轮廓 */
 :focus-visible { outline: 2px solid var(--p-cyan); outline-offset: 2px; }
-html[data-shell="earth"] :focus-visible { outline-color: var(--e-cyan); }
+html[data-shell="earth"] :focus-visible,
+html[data-shell="app"] :focus-visible { outline-color: var(--e-cyan); }
