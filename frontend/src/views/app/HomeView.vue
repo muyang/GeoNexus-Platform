@@ -9,7 +9,7 @@ import { caseApi } from '@/api'
 
 const ui = useUiStore(); const router = useRouter()
 const globeEl = ref(null)
-const { mount, destroy, ready, loading } = useMap()
+const { mount, ready, loading } = useMap()
 const recommended = ref([])
 
 const abilities = [

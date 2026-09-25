@@ -1,0 +1,280 @@
+<script setup>
+/** 案例模块（对齐参照站 ref-02）：**左列表 + 右 dossier**。
+ *
+ *  参照站的案例页把"有哪些案例"和"这个案例是什么"分开：左窄栏是列表，
+ *  右宽栏是档案（研究区域 / 问题 / 所用数据 / 处理过程）。改版前我们把列表、详情、
+ *  四级图层、运行记录全塞进一个 360px 抽屉，主体（地球）反而被挤没了。
+ *
+ *  这里保留并收进 dossier「图层」分段的能力：四级 LOD、双时间轴、几何开关、
+ *  PC1 图例、点选地点详情、血缘弧线、合成数据标注 —— 它们本来就在
+ *  `useCaseLayers()` 与 `CaseLayersPanel` 里，这次只是换了个更清楚的落点。
+ */
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import PageShell from '@/components/PageShell.vue'
+import CaseLayersPanel from '@/components/CaseLayersPanel.vue'
+import SourceTag from '@/components/SourceTag.vue'
+import { caseApi } from '@/api'
+import { useMap } from '@/composables/map'
+import { useCaseLayers } from '@/composables/caseLayers'
+import { useAuthStore } from '@/stores/auth'
+
+const route = useRoute(); const router = useRouter(); const auth = useAuthStore()
+const mapEl = ref(null)
+const { mount, fit, ready, loading } = useMap()
+const layers = useCaseLayers()
+
+const rows = ref([]); const source = ref(''); const degraded = ref(false); const error = ref('')
+const detail = ref(null)
+const runState = ref({ busy: false, error: '', hint: '' })
+
+const statusLabel = (c) => (c.status === 'published' ? '已发布' : c.status === 'draft' ? '草稿' : (c.status || '—'))
+const isSpatial = (c) => Array.isArray(c?.bbox) && c.bbox.length === 4
+const isLive = (c) => c?.provenance === 'live'
+
+async function load() {
+  const r = await caseApi.list()
+  rows.value = r.rows; source.value = r.source; degraded.value = r.degraded; error.value = r.error || ''
+  const wanted = String(route.query.case || '')
+  const picked = rows.value.find((c) => c.id === wanted) || rows.value[0] || null
+  if (picked) await pick(picked)
+}
+
+async function pick(c) {
+  detail.value = c
+  runState.value = { busy: false, error: '', hint: '' }
+  // dossier 是 v-if 渲染的：第一次挂载时地图容器还不存在，
+  // 必须等 DOM 出来再挂引擎（否则 mount(null) 静默返回，地图卡永远"未就绪"）。
+  await nextTick()
+  if (!ready.value) await mount(mapEl.value)
+  await layers.load(c.id)
+}
+
+/** 按方案运行：任务图与参数契约都来自 SDK，平台只负责提交与登记。 */
+async function runRecipe() {
+  if (!detail.value) return
+  runState.value = { busy: true, error: '', hint: '' }
+  try {
+    const res = await caseApi.runRecipe({ caseId: detail.value.id })
+    runState.value = { busy: false, error: '',
+      hint: `已按任务图执行 ${res.steps?.length || 0} 步，交付物 ${res.deliverables?.length || 0} 项` }
+    await pick(detail.value)
+  } catch (e) {
+    runState.value = { busy: false, error: e.message,
+      hint: e.body?.hint || (e.body?.field ? `参数 ${e.body.field} 不合格` : '') }
+  }
+}
+
+const components = computed(() => layers.components.value || [])
+const dataComponents = computed(() => components.value.filter((c) => c.role !== 'skill' && c.role !== 'compute'))
+const operatorComponents = computed(() => components.value.filter((c) => c.role === 'skill' || c.role === 'compute'))
+const recipe = computed(() => layers.view.value?.recipe || null)
+const steps = computed(() => recipe.value?.steps || [])
+const stepRuns = computed(() => {
+  const map = {}
+  for (const s of layers.steps.value) map[s.stepId] = s
+  return map
+})
+const deliverables = computed(() => (layers.groups.value || []).flatMap((g) => g.items))
+
+onMounted(async () => {
+  await mount(mapEl.value)
+  await load()
+})
+// 卸载时不销毁地球：由壳在挂载时按容器复用（见 engines/cesium.mount）
+</script>
+
+<template>
+  <PageShell title="案例" subtitle="把研究组织成可复用、可复跑、可交付的案例：左侧选择案例，右侧查看研究区域、数据、处理过程与图层。">
+    <template #actions>
+      <SourceTag :source="source" :degraded="degraded" :error="error" />
+    </template>
+
+    <div class="cases">
+      <!-- 左：案例列表 -->
+      <aside class="case-list">
+        <p v-if="!rows.length" class="empty">案例库为空，或后端不可达。</p>
+        <button v-for="c in rows" :key="c.id" class="case-row" type="button"
+                :class="{ on: detail?.id === c.id }" @click="pick(c)">
+          <span class="case-row-head">
+            <strong>{{ c.title }}</strong>
+            <em class="tag" :class="isLive(c) ? 'tag-live' : 'tag-arch'">{{ isLive(c) ? '实测' : '存档' }}</em>
+          </span>
+          <span class="case-row-sub">{{ c.aoi || c.question || '未标注研究区域' }}</span>
+          <span class="case-row-meta">
+            {{ statusLabel(c) }}<template v-if="!isSpatial(c)"> · 非空间（侧栏展示）</template>
+          </span>
+        </button>
+      </aside>
+
+      <!-- 右：dossier -->
+      <section v-if="detail" class="dossier">
+        <header class="dossier-head">
+          <h2>{{ detail.title }}</h2>
+          <span class="tag" :class="isLive(detail) ? 'tag-live' : 'tag-arch'">
+            {{ isLive(detail) ? '实测运行' : '存档案例' }}
+          </span>
+          <span v-if="layers.notice.value" class="tag tag-warn">合成/示意数据</span>
+          <div class="dossier-actions">
+            <button class="btn-ghost" type="button" :disabled="runState.busy || !auth.loggedIn"
+                    @click="runRecipe">{{ runState.busy ? '执行中…' : '按方案运行' }}</button>
+            <button class="btn-ghost" type="button" @click="layers.toggleGeometry('sites')">地点开关</button>
+          </div>
+        </header>
+
+        <p v-if="runState.error" class="pill bad">{{ runState.error }}</p>
+        <p v-else-if="runState.hint" class="dim">{{ runState.hint }}</p>
+
+        <div class="dossier-grid">
+          <!-- 左列：文档式字段 -->
+          <div class="col-text">
+            <h3>研究区域</h3>
+            <p class="field">{{ detail.aoi || '未声明' }}</p>
+
+            <h3>问题</h3>
+            <p class="field">{{ detail.question || '未声明' }}</p>
+
+            <h3>所用数据</h3>
+            <table v-if="dataComponents.length" class="kv-table">
+              <thead><tr><th>资产</th><th>角色</th><th>可见性</th><th>范围</th></tr></thead>
+              <tbody>
+                <tr v-for="c in dataComponents" :key="c.id">
+                  <td class="mono">{{ c.id }}</td>
+                  <td>{{ c.role }}</td>
+                  <td><em class="tag" :class="c.visibility === 'public' ? 'tag-ok' : 'tag-warn'">{{ c.visibility || '—' }}</em></td>
+                  <td class="mono">{{ c.bbox ? c.bbox.map((n) => n.toFixed(1)).join(', ') : '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="dim">该案例未声明数据组成项。</p>
+
+            <h3>处理过程</h3>
+            <ol v-if="steps.length" class="steps">
+              <li v-for="s in steps" :key="s.id">
+                <span class="step-num">{{ s.id }}</span>
+                <span class="step-body">
+                  <strong>{{ s.kind === 'skill' ? 'EXECUTE' : s.kind.toUpperCase() }} · {{ s.uses }}</strong>
+                  <em v-if="stepRuns[s.id]" class="tag" :class="stepRuns[s.id].status === 'succeeded' ? 'tag-ok' : 'tag-warn'">
+                    {{ stepRuns[s.id].status }}
+                  </em>
+                  <span class="step-desc">{{ s.description || '（方案未写说明）' }}</span>
+                </span>
+              </li>
+            </ol>
+            <p v-else class="dim">该案例尚未绑定可执行方案（没有处理过程）。</p>
+
+            <h3>交付物</h3>
+            <ul v-if="deliverables.length" class="deliverables">
+              <li v-for="d in deliverables" :key="d.deliverableId">
+                <span class="mono">{{ d.name }}</span>
+                <em class="tag">{{ d.role }}</em>
+                <a v-if="d.deliverableId && d.role === 'knowledge'" class="link"
+                   :href="layers.deliverableUrl(d.deliverableId)" target="_blank" rel="noopener">查看报告 ↗</a>
+              </li>
+            </ul>
+            <p v-else class="dim">还没有交付物 —— 运行一次方案后产生。</p>
+
+            <h3>参数契约</h3>
+            <table v-if="recipe && recipe.contract && recipe.contract.length" class="kv-table">
+              <thead><tr><th>参数</th><th>取值</th><th>范围</th><th>可否修改</th></tr></thead>
+              <tbody>
+                <tr v-for="p in recipe.contract" :key="p.name">
+                  <td class="mono">{{ p.name }}</td>
+                  <td class="mono">{{ recipe.params?.[p.name] ?? p.default ?? '—' }}</td>
+                  <td class="mono">
+                    {{ p.enum && p.enum.length ? p.enum.join(' / ')
+                      : (p.minimum !== null || p.maximum !== null ? `${p.minimum ?? '−∞'} … ${p.maximum ?? '∞'}` : '—') }}
+                  </td>
+                  <td><em class="tag" :class="p.scope === 'fixed' ? 'tag-warn' : 'tag-ok'">{{ p.scope === 'fixed' ? '作者钉死' : '可改' }}</em></td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="dim">未绑定方案，或方案未声明参数契约。</p>
+          </div>
+
+          <!-- 右列：地图卡 + 图层面板 -->
+          <div class="col-map">
+            <div class="map-card">
+              <div class="map-card-head">
+                <span>案例范围与图层</span>
+                <span class="dim">{{ ready ? 'globe ready' : (loading ? '加载中…' : (layers.spatial.value ? '未就绪' : '非空间案例')) }}</span>
+              </div>
+              <div ref="mapEl" class="map-card-canvas" />
+              <p v-if="!layers.spatial.value" class="map-card-note">
+                非空间案例：只进侧栏，不上地球（没有范围就没有位置）。
+              </p>
+            </div>
+            <CaseLayersPanel :layers="layers" @fit="fit" />
+          </div>
+        </div>
+      </section>
+      <section v-else class="dossier empty-pane">左侧选择一个案例</section>
+    </div>
+  </PageShell>
+</template>
+
+<style scoped>
+.cases { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+
+/* 左列表：一行一个案例，选中高亮 */
+.case-list { display: flex; flex-direction: column; gap: 8px; }
+.case-row { text-align: left; padding: 12px 13px; border-radius: 11px; cursor: pointer; color: inherit;
+  font: inherit; border: 1px solid var(--e-line, rgba(255,255,255,.08)); background: rgba(255,255,255,.02); }
+.case-row:hover { border-color: rgba(87,215,255,.5); }
+.case-row.on { border-color: var(--e-cyan, #57d7ff); background: rgba(87,215,255,.08); }
+.case-row-head { display: flex; align-items: flex-start; gap: 8px; }
+.case-row-head strong { font-size: 13.5px; line-height: 1.4; }
+.case-row-sub { display: block; margin-top: 5px; font-size: 12px; opacity: .72; line-height: 1.5; }
+.case-row-meta { display: block; margin-top: 6px; font-size: 11.5px; opacity: .6; }
+
+/* 右 dossier */
+.dossier { border: 1px solid var(--e-line, rgba(255,255,255,.08)); border-radius: 14px;
+  background: rgba(255,255,255,.02); padding: 18px 20px 22px; min-width: 0; }
+.dossier.empty-pane { display: flex; align-items: center; justify-content: center; opacity: .6; min-height: 240px; }
+.dossier-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dossier-head h2 { margin: 0; font-size: 21px; }
+.dossier-actions { margin-left: auto; display: flex; gap: 8px; }
+.dossier-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 1fr); gap: 22px; margin-top: 16px; }
+.col-text h3 { margin: 18px 0 7px; font-size: 13px; letter-spacing: .05em; opacity: .82; }
+.col-text h3:first-child { margin-top: 0; }
+.field { margin: 0; font-size: 13.5px; line-height: 1.75; opacity: .92; }
+
+.kv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.kv-table th, .kv-table td { border-bottom: 1px solid var(--e-line, rgba(255,255,255,.07)); padding: 6px 8px; text-align: left; }
+.kv-table th { font-weight: 600; opacity: .7; font-size: 11.5px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.steps li { display: flex; gap: 10px; align-items: flex-start; }
+.step-num { flex: none; width: 26px; text-align: right; font-family: ui-monospace, monospace; opacity: .6; font-size: 12px; }
+.step-body { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; font-size: 12.5px; }
+.step-desc { flex-basis: 100%; opacity: .7; line-height: 1.6; }
+
+.deliverables { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.deliverables li { display: flex; align-items: center; gap: 8px; }
+.link { opacity: .85; text-decoration: none; border-bottom: 1px dashed currentColor; }
+
+.map-card { border: 1px solid var(--e-line, rgba(255,255,255,.08)); border-radius: 12px; overflow: hidden; }
+.map-card-head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; font-size: 12.5px;
+  border-bottom: 1px solid var(--e-line, rgba(255,255,255,.08)); }
+.map-card-canvas { height: 300px; }
+.map-card-note { margin: 0; padding: 8px 11px; font-size: 12px; opacity: .7; }
+
+.tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--e-line, rgba(255,255,255,.14)); opacity: .9; }
+.tag-live { border-color: rgba(60,230,176,.6); }
+.tag-arch { opacity: .7; }
+.tag-ok { border-color: rgba(60,230,176,.5); }
+.tag-warn { border-color: rgba(255,196,92,.6); }
+.btn-ghost { height: 30px; padding: 0 12px; border-radius: 8px; cursor: pointer; color: inherit;
+  border: 1px solid var(--e-line, rgba(255,255,255,.14)); background: transparent; font: inherit; font-size: 12.5px; }
+.btn-ghost:disabled { opacity: .45; cursor: not-allowed; }
+.dim { font-size: 12px; opacity: .65; }
+.empty { font-size: 13px; opacity: .7; }
+.pill.bad { border-color: rgba(255,107,107,.6); }
+
+@media (max-width: 1100px) {
+  .cases { grid-template-columns: 1fr; }
+  .dossier-grid { grid-template-columns: 1fr; }
+}
+</style>

@@ -36,7 +36,10 @@ export function createCesiumEngine(state) {
 
   async function mount(container, { basemap = 'satellite', projection = '3d', homeView } = {}) {
     if (!container) return false
-    if (viewer) return true
+    // 已经挂在这个容器里：什么都不用做。
+    // （跨页面复用时容器会换，这时才需要重建 —— 早先直接 `if (viewer) return true`，
+    //   换页后地球仍留在旧容器里，新页面的地图卡是空的。）
+    if (viewer && container.contains(viewer.canvas)) return true
     basemapId.value = basemap
     loading.value = true
     try {

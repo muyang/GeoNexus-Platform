@@ -20,10 +20,9 @@ export const routes = [
     meta: { shell: 'app', access: 'public', titleKey: 'nav.compute' } },
   { path: '/community', name: 'community', component: () => import('@/views/app/CommunityView.vue'),
     meta: { shell: 'app', access: 'public', titleKey: 'nav.community' } },
-  // 案例与工作台、个人中心仍用旧的深色壳（页内自带抽屉式列表），
-  // 下一轮按参照站改成"左列表 + 右 dossier"，改完再切到 app 壳。
-  { path: '/cases', name: 'cases', component: () => import('@/views/earth/CaseCenter.vue'),
-    meta: { shell: 'earth', access: 'public', titleKey: 'nav.cases' } },
+  // 案例：左列表 + 右 dossier（对齐参照站），地图作为 dossier 里的内联卡片
+  { path: '/cases', name: 'cases', component: () => import('@/views/app/CaseView.vue'),
+    meta: { shell: 'app', access: 'public', titleKey: 'nav.cases' } },
   { path: '/workbench', name: 'workbench', component: () => import('@/views/earth/Workbench.vue'),
     meta: { shell: 'earth', access: 'auth', titleKey: 'nav.workbench' } },
   { path: '/account', name: 'account', component: () => import('@/views/earth/PersonalCenter.vue'),
