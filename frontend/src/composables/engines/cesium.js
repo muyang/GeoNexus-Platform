@@ -37,15 +37,6 @@ export function createCesiumEngine(state) {
   async function mount(container, { basemap = 'satellite', projection = '3d', homeView } = {}) {
     if (!container) return false
     if (viewer) return true
-    // 拾取一次挂一次：点的属性交给面板（PC1、达标种群数…）
-    viewerSelectionHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
-    viewerSelectionHandler.setInputAction((click) => {
-      const picked = viewer.scene.pick(click.position)
-      const entity = picked && picked.id
-      if (entity && entity.properties && entity.properties.getValue && featureClick) {
-        featureClick(entity.properties.getValue(Cesium.JulianDate.now()))
-      }
-    }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
     basemapId.value = basemap
     loading.value = true
     try {
@@ -70,8 +61,22 @@ export function createCesiumEngine(state) {
       viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(home.lon, home.lat, home.height) })
       if (projection === '2d') viewer.scene.morphTo2D(0)
 
+      // 拾取：把实体属性交给上层面板（PC1、达标种群数…）。
+      // **必须在 Cesium 加载完成之后** —— 之前放在 mount 开头，直接
+      // "Cesium is not defined"，整个引擎挂掉、地球全黑（真机截图才发现）。
+      viewerSelectionHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
+      viewerSelectionHandler.setInputAction((click) => {
+        const picked = viewer.scene.pick(click.position)
+        const entity = picked && picked.id
+        if (entity && entity.properties && entity.properties.getValue && featureClick) {
+          featureClick(entity.properties.getValue(Cesium.JulianDate.now()))
+        }
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
+
       const markReady = (why) => {
         if (ready.value) return
+        if (pendingOverlay) syncCaseOverlay(pendingOverlay, { provenance: pendingProvenance })
+        if (pendingFit) fit(pendingFit)
         ready.value = true; loading.value = false; basemapFailed.value = false; slowBasemap.value = false
         if (import.meta.env.DEV) console.debug(`[cesium] 地球就绪（${why}）`)
       }
@@ -110,6 +115,9 @@ export function createCesiumEngine(state) {
   const caseEntities = new Map()
   const caseDataSources = new Map()
   let featureClick = null
+  let pendingOverlay = null
+  let pendingProvenance = false
+  let pendingFit = null
   let viewerSelectionHandler = null
 
   function syncLayers(cards) {
@@ -175,9 +183,9 @@ export function createCesiumEngine(state) {
       fill: Cesium.Color.TRANSPARENT, strokeWidth: 2
     })
     await add('water_change', {
-      stroke: Cesium.Color.WHITE.withAlpha(0.35),
+      stroke: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.loss.color).withAlpha(1),
       fill: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.loss.color).withAlpha(WATER_CLASS_STYLE.loss.opacity),
-      strokeWidth: 1
+      strokeWidth: 1.5
     })
     await add('sites', {
       markerSymbol: 'o', markerColor: Cesium.Color.fromCssColorString(PC1_BANDS.high.color),
@@ -191,6 +199,12 @@ export function createCesiumEngine(state) {
           const style = WATER_CLASS_STYLE[props.class]
           if (entity.polygon) {
             entity.polygon.material = Cesium.Color.fromCssColorString(style.color).withAlpha(style.opacity)
+            // 碎片化的水面斑块在卫星底图上单靠填充不够醒目：同色描边让边界可读
+            if (entity.polygon.outline !== undefined) {
+              entity.polygon.outline = true
+              entity.polygon.outlineColor = Cesium.Color.fromCssColorString(style.color)
+              entity.polygon.outlineWidth = 2
+            }
           }
           entity.description = style.label + '（' + (props.pixels || 0) + ' 像元）'
         }
@@ -209,6 +223,11 @@ export function createCesiumEngine(state) {
   }
   function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
     const Cesium = CesiumMod
+    // 数据常常比引擎先到（子组件 onMounted 先于父组件里的地图挂载）。
+    // 存下最后一次请求，等就绪时补画 —— 否则症状是"面板有几何、地球上什么都没有"。
+    pendingOverlay = overlay
+    pendingProvenance = provenance
+    if (onFeatureClick) featureClick = onFeatureClick
     if (!viewer || !Cesium) return
     for (const key of [...caseEntities.keys()]) {
       const e = caseEntities.get(key)
@@ -262,7 +281,10 @@ export function createCesiumEngine(state) {
     }
     document.documentElement.dataset.caseOverlay = String(caseEntities.size)
     if (onFeatureClick) featureClick = onFeatureClick
-    drawCaseGeometry(overlay).catch(() => { /* 几何画不出来不该影响底图 */ })
+    drawCaseGeometry(overlay).catch((err) => {
+      console.error('[cesium] 案例几何绘制失败:', err && err.message ? err.message : err)
+      document.documentElement.dataset.caseGeometryError = String(err && err.message ? err.message : err)
+    })
   }
 
   function clearCaseOverlay() { syncCaseOverlay(null) }
@@ -281,7 +303,8 @@ export function createCesiumEngine(state) {
   }
 
   function fit(bbox) {
-    if (!viewer || !CesiumMod || !Array.isArray(bbox) || bbox.length !== 4) return
+    if (!Array.isArray(bbox) || bbox.length !== 4) return
+    if (!viewer || !CesiumMod) { pendingFit = bbox; return }
     const [w, s, e, n] = bbox
     viewer.camera.flyTo({ destination: CesiumMod.Rectangle.fromDegrees(w, s, e, n), duration: 1.2 })
   }

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>yellow-sea · 候鸟栖息湿地水面变化与优先地点评估</title>
+<style>
+ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        max-width: 900px; margin: 32px auto; padding: 0 20px; line-height: 1.65; color: #1c2333; }
+ h1 { font-size: 22px; margin-bottom: 4px; }
+ h2 { font-size: 16px; margin-top: 26px; border-left: 3px solid #2f6fed; padding-left: 8px; }
+ table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0 4px; }
+ th, td { border: 1px solid #dfe3ec; padding: 5px 8px; text-align: left; }
+ th { background: #f5f7fc; }
+ .kv td:first-child { width: 220px; color: #5b6478; }
+ .warn { background: #fff6e5; border: 1px solid #f0c987; padding: 8px 12px; border-radius: 6px; }
+ .meta { color: #67708a; font-size: 12px; }
+ code { background: #f2f4f9; padding: 1px 4px; border-radius: 3px; }
+</style></head><body>
+<h1>yellow-sea · 候鸟栖息湿地水面变化与优先地点评估</h1>
+<p class="meta">基线年 2010 → 目标年 2024 ·
+ 方法：NDWI 水体提取 + PC1 优先分值（1% 规则） · 生成于 GeoNexus 案例链路</p>
+<p class='warn'>本报告的全部输入为<strong>合成/示意数据</strong>（GEONEXUS_SYNTHETIC=TRUE），用于验证流程与模版，<strong>不得用于任何科研或保护决策</strong>。替换真实数据后本节会自动消失。</p>
+
+<h2>一、结论</h2>
+<ul>
+  <li>水面变化：基线期水面 <strong>3,535.711 km²</strong>，
+      目标期损失 <strong>909.352 km²</strong>、
+      增加 <strong>112.812 km²</strong>，
+      净变化 <strong>-796.540 km²</strong>
+      （损失率 <strong>25.72%</strong>）。</li>
+  <li>优先地点：PC1 阈值 <strong>0.20</strong> 下，
+      8 个评估地点中有
+      <strong>4 个</strong>达到入选标准。</li>
+  <li>水体提取：目标年水面占比 <strong>30.16%</strong>，
+      NDWI 阈值 <strong>0.00</strong>。</li>
+</ul>
+<p>结论口径：PC1 衡量的是"一个地点承载了多少国际重要种群比例"，
+<strong>它不评价栖息地质量、当前威胁与未来开发风险</strong>（原文第十五、十六节明确列为局限）。
+因此本报告给出的是"哪些地点不可替代"，不是"哪些地点状况良好"。</p>
+
+<h2>二、方法</h2>
+<table class="kv">
+  <tr><td>水面提取</td><td>NDWI = (Green − NIR) / (Green + NIR)，阈值 0.00；
+      像元面积按中心纬度近似换算</td></tr>
+  <tr><td>水面变化</td><td>两期掩膜逐像元对比，统计损失/增加/净变化与损失率</td></tr>
+  <tr><td>优先分值 PC1</td><td>对每个达到国际重要数量（≥ 种群 1%）的种群累加"本地点个体数 ÷ 种群总量"，
+      得到该地点综合分值；阈值 0.20</td></tr>
+  <tr><td>1% 规则</td><td>启用（Ramsar 第 6 条标准）</td></tr>
+  <tr><td>区域校准</td><td>原文：中国与蒙古阈值 10，其余八国阈值 1</td></tr>
+</table>
+
+<h2>三、优先地点（按 PC1 排序，前 8）</h2>
+<table>
+  <tr><th>排名</th><th>地点</th><th>PC1</th><th>达标种群数</th><th>是否优先</th></tr>
+  <tr><td>1</td><td>示意地点 01（大型潮滩）</td><td>0.52</td><td>20</td><td>是</td></tr>
+<tr><td>2</td><td>示意地点 02（河口沙洲）</td><td>0.36</td><td>18</td><td>是</td></tr>
+<tr><td>3</td><td>示意地点 06（内陆湖泊）</td><td>0.30</td><td>15</td><td>是</td></tr>
+<tr><td>4</td><td>示意地点 04（高潮位休息地）</td><td>0.26</td><td>14</td><td>是</td></tr>
+<tr><td>5</td><td>示意地点 03（围垦养殖塘）</td><td>0.17</td><td>9</td><td>否</td></tr>
+<tr><td>6</td><td>示意地点 07（洪泛平原）</td><td>0.12</td><td>8</td><td>否</td></tr>
+<tr><td>7</td><td>示意地点 05（盐田）</td><td>0.12</td><td>7</td><td>否</td></tr>
+<tr><td>8</td><td>示意地点 08（小型停歇地）</td><td>0.10</td><td>6</td><td>否</td></tr>
+</table>
+<p class="meta">达标种群数 = 在该地点达到或超过其种群 1% 的水鸟种群个数。</p>
+
+<h2>四、数据来源与快照</h2>
+<table class="kv">
+  <tr><td>研究区</td><td>yellow-sea</td></tr>
+  <tr><td>数据快照</td><td><code>{"sample_data": "synthetic-20260925"}</code></td></tr>
+  <tr><td>方法来源</td><td>Identifying priority wetland sites in the East Asian–Australasian Flyway for migratory bird conservation</td></tr>
+  <tr><td>方法来源链接</td><td>10.1038/s41598-025-31727-2</td></tr>
+  <tr><td>运行身份</td><td><code>local-run-1</code></td></tr>
+</table>
+
+<h2>五、局限（必读）</h2>
+<ol>
+  <li><strong>调查强度不均</strong>：监测越充分的地点越容易记录到高峰数量与更多达标种群，
+      "没有数据"不等于"没有鸟"（原文第十四节）。</li>
+  <li><strong>单次最大数量与多年平均混用</strong>：会同时带来高估与低估（原文第十五节）。</li>
+  <li><strong>PC1 不含栖息地质量与威胁</strong>：高分地点可能已接近崩溃（原文第十六节）。</li>
+  <li><strong>本报告的遥感阈值与种群量是案例参数</strong>，不是论文的定值；
+      论文的地点边界由各国专家核定，属于本案例待补的数据槽位。</li>
+</ol>
+<p class="meta">详细的事实台账与待补槽位见 <code>docs/cases/flightway-wetland.md</code>。</p>
+</body></html>

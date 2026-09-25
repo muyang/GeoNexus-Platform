@@ -9,6 +9,8 @@ export function createMaplibreEngine(state, hooks = {}) {
   const { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers } = state
   let loadTimer = null
   let featureClick = null
+  let pendingOverlay = null
+  let pendingFit = null
   let retried = false
   const TIMEOUT_MS = 8000
 
@@ -29,6 +31,8 @@ export function createMaplibreEngine(state, hooks = {}) {
 
   function markReady(why) {
     if (ready.value) return
+    if (pendingOverlay) syncCaseOverlay(pendingOverlay)
+    if (pendingFit) fit(pendingFit)
     ready.value = true; loading.value = false; basemapFailed.value = false; slowBasemap.value = false
     clearTimer()
     if (import.meta.env.DEV) console.debug(`[maplibre] 底图就绪（${why}）`)
@@ -147,7 +151,8 @@ export function createMaplibreEngine(state, hooks = {}) {
           'fill-color': ['match', ['get', 'class'], 'loss', WATER_CLASS_STYLE.loss.color,
             'gain', WATER_CLASS_STYLE.gain.color, WATER_CLASS_STYLE.stable.color],
           'fill-opacity': name === 'water_baseline' ? 0 : WATER_CLASS_STYLE.loss.opacity,
-          'fill-outline-color': WATER_CLASS_STYLE.stable.color
+          'fill-outline-color': ['match', ['get', 'class'], 'loss', WATER_CLASS_STYLE.loss.color,
+            'gain', WATER_CLASS_STYLE.gain.color, WATER_CLASS_STYLE.stable.color]
         } })
       }
     }
@@ -156,9 +161,10 @@ export function createMaplibreEngine(state, hooks = {}) {
   }
   function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
     if (onFeatureClick) featureClick = onFeatureClick
-    bindCaseClicks()
+    pendingOverlay = overlay
     const mp = map.value
     if (!mp) return
+    bindCaseClicks()
     const draw = () => {
       for (const id of ['case-aoi', 'case-components', 'case-arcs']) {
         if (mp.getLayer(`lyr-${id}`)) mp.removeLayer(`lyr-${id}`)
@@ -228,7 +234,8 @@ export function createMaplibreEngine(state, hooks = {}) {
 
   function fit(bbox) {
     const m = map.value
-    if (!m || !Array.isArray(bbox) || bbox.length !== 4) return
+    if (!Array.isArray(bbox) || bbox.length !== 4) return
+    if (!m) { pendingFit = bbox; return }
     m.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 80, duration: 600 })
   }
 

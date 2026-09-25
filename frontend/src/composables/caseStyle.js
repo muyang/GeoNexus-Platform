@@ -6,9 +6,9 @@
 
 /** 水面变化分级：语义色，冷暖对比 */
 export const WATER_CLASS_STYLE = {
-  loss: { color: '#ff6b6b', label: '水面损失', opacity: 0.55 },
-  gain: { color: '#3ce6b0', label: '水面增加', opacity: 0.55 },
-  stable: { color: '#57d7ff', label: '稳定水面', opacity: 0.25 } // 面积大，默认不画
+  loss: { color: '#ff5a5a', label: '水面损失', opacity: 0.85 },
+  gain: { color: '#19d79b', label: '水面增加', opacity: 0.85 },
+  stable: { color: '#57d7ff', label: '稳定水面', opacity: 0.3 } // 面积大，默认不画
 };
 
 /** PC1 分级：同一色相三档明度（高分更亮更暖） */

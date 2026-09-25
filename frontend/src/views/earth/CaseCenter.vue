@@ -3,14 +3,17 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
 import { useCaseLayers } from '@/composables/caseLayers'
+import { useRoute } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import SourceTag from '@/components/SourceTag.vue'
 import CaseLayersPanel from '@/components/CaseLayersPanel.vue'
 
-const ui = useUiStore(); const auth = useAuthStore(); const { fit } = useMap()
+const ui = useUiStore(); const auth = useAuthStore(); const route = useRoute()
+const { fit } = useMap()
 const layers = useCaseLayers()
-const pane = ref('case')   // case | layers
+// 支持深链：/cases?pane=layers 直接进图层页（讲课时给一条链接就够，不用现场点）
+const pane = ref(route.query.pane === 'layers' ? 'layers' : 'case')   // case | layers
 const recipeRun = ref({ busy: false, error: '', hint: '' })
 const rows = ref([]); const picked = ref(null)
 const source = ref(''); const degraded = ref(false); const error = ref('')
@@ -24,7 +27,9 @@ const activeRun = computed(() => runs.value.find((r) => !['succeeded', 'failed',
 async function load() {
   const r = await caseApi.list()
   rows.value = r.rows; source.value = r.source; degraded.value = r.degraded; error.value = r.error || ''
-  picked.value = rows.value[0] || null
+  // 深链 /cases?case=<id>：讲课时给一条链接就能直达某个案例
+  const wanted = String(route.query.case || '')
+  picked.value = rows.value.find((c) => c.id === wanted) || rows.value[0] || null
   if (picked.value) { await loadRuns(); await layers.load(picked.value.id) }
 }
 

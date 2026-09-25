@@ -1,0 +1,9 @@
+rank,site_id,site_name,kind,pc1,priority,species_meeting_1pct,threatened_species_meeting_1pct,top_species
+1,site-01,示意地点 01（大型潮滩）,coastal,0.5213,TRUE,20,15,红嘴鸥
+2,site-02,示意地点 02（河口沙洲）,coastal,0.3553,TRUE,18,13,环颈鸻
+3,site-06,示意地点 06（内陆湖泊）,inland,0.3021,TRUE,15,10,环颈鸻
+4,site-04,示意地点 04（高潮位休息地）,coastal,0.2611,TRUE,14,11,红嘴鸥
+5,site-03,示意地点 03（围垦养殖塘）,artificial,0.1715,FALSE,9,5,绿头鸭
+6,site-07,示意地点 07（洪泛平原）,inland,0.1203,FALSE,8,4,环颈鸻
+7,site-05,示意地点 05（盐田）,artificial,0.1161,FALSE,7,3,绿头鸭
+8,site-08,示意地点 08（小型停歇地）,inland,0.1028,FALSE,6,3,赤颈鸭

@@ -31,6 +31,7 @@ const basemapId = ref(DEFAULT_BASEMAP)
 const layers = ref([])
 //: 当前选中的案例叠加层（切引擎时用来重放；默认 null = 不画）
 const caseOverlay = ref(null)
+let caseOverlayOpts = {}
 
 const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, caseOverlay }
 const engines = { maplibre: createMaplibreEngine(state), cesium: createCesiumEngine(state) }
@@ -75,6 +76,7 @@ export function useMap() {
     layers.value = []
     caseOverlay.value = null
     if (container.value) await active().mount(container.value, { basemap: basemapId.value, projection: projection.value, homeView: homeView.value })
+    replayCaseOverlay()
   }
 
   function setProjection(p) {
@@ -95,9 +97,16 @@ export function useMap() {
   }
 
   /** 案例叠加层：与 GeoCard 图层分开，选中案例时才画。 */
-  function syncCaseOverlay(overlay, opts) {
+  function syncCaseOverlay(overlay, opts = {}) {
     caseOverlay.value = overlay || null
-    active().syncCaseOverlay?.(caseOverlay.value, opts)
+    caseOverlayOpts = opts || {}
+    active().syncCaseOverlay?.(caseOverlay.value, caseOverlayOpts)
+  }
+
+  /** 引擎挂载或切换完成后重放一次叠加层：数据常常先到、引擎后好。
+   *  少了这一步的症状很隐蔽 —— 面板上明明有几何，地球上什么都没有。 */
+  function replayCaseOverlay() {
+    if (caseOverlay.value) active().syncCaseOverlay?.(caseOverlay.value, caseOverlayOpts)
   }
   function clearCaseOverlay() { caseOverlay.value = null; active().clearCaseOverlay?.() }
 
@@ -106,7 +115,7 @@ export function useMap() {
     engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards, caseOverlay,
     // 动作
     mount, destroy, setEngine, setProjection, loadSettings,
-    syncLayers, syncCaseOverlay, clearCaseOverlay,
+    syncLayers, syncCaseOverlay, clearCaseOverlay, replayCaseOverlay,
     setVisible: (id, v) => active().setVisible(id, v),
     setOpacity: (id, o) => active().setOpacity(id, o),
     fit: (b) => active().fit(b),

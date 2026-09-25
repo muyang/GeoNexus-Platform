@@ -82,3 +82,31 @@ node scripts/seed-flightway-case.mjs     # 回到默认：含受限点位
 | 面板出现「部分几何加载失败」 | 某一份 GeoJSON 取不到 | 看平台日志与 `uploads/cases/flightway/` 是否存在 |
 | 改了前端但页面没变 | 平台服务的是 `frontend/dist` 构建产物 | `cd frontend && npm run build` 后刷新 |
 | L4 报告面板空白或显示 401 | 交付物下载**需要登录**（产物是受控读取，与产物白名单同一策略） | 用管理员/机构账号登录后再点 ▤ |
+
+---
+
+## 七、真机截图与实测记录（首次可视化验证）
+
+![地球上的案例几何](images/flightway-case-globe.png)
+
+用 `scripts/shoot.mjs`（零依赖 CDP + 无头 Chrome）实测，发现并修掉了**三个只有真机才会暴露的问题**：
+
+| # | 症状 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 地球**全黑**、状态显示 `offline`，控制台 `ReferenceError: Cesium is not defined` | 拾取处理器写在了 `mount()` 开头，而 `Cesium` 是之后 `await loadCesium()` 才有的 | 移到加载完成、viewer 建好之后 |
+| 2 | 面板里几何齐全、地球上什么都没有（`dataset.caseOverlay` 未设置） | 子组件 `onMounted` 先于父布局里的地图挂载：叠加层比引擎先到就被丢掉了 | 引擎侧把最后一次叠加层与相机请求**排队**，就绪后补画；门面在挂载/切引擎后重放 |
+| 3 | 控制台 `crs.properties is undefined`，面画不出来 | 导出的 GeoJSON 带了非标准 `crs` 字符串成员；RFC 7946 已废弃它，Cesium 会当对象解析 | 导出器不再写 `crs`（坐标一律 EPSG:4326，投影信息只放 manifest） |
+
+实测探针（`window.__gnxGlobe`）确认几何**确实画上去了**：
+
+```
+相机: height 748 km, lon 120.52, lat 32.91（案例 AOI 内）
+water_change: 857 个实体 / 全部多边形 / 材质 rgba(255,107,107,0.85)（损失色）
+sites: 8 个 billboard
+```
+
+**还没解决的一点**：在无头 Chrome（软件渲染）里，该缩放级别的卫星底图瓦片没有加载完，
+背景是一张模糊的放大瓦片，因此**"红/青斑块在真实底图上的可读性"这次没能被眼睛确认**。
+已知的原因是合成数据的水面本身是**碎片化**的（3845 个损失像元被分成 857 个小斑块，
+每块约 1 公里），在 748 km 视高下每块只有几个像素。建议下一步二选一：
+调近一点看单个地点，或把矢量化的最小斑块阈值提高后再导出。
