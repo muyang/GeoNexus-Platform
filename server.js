@@ -1158,6 +1158,14 @@ function createJob(plan) {
       jobTimers.delete(id);
       return;
     }
+    // 任务被删除、或数据来自不含 checkpoints 的旧记录：停表而不是崩掉整个服务。
+    // 这里原本直接读 current.checkpoints.length，一次 undefined 就让 BFF 退出
+    // （实测：POST /api/tasks 建的演示任务，30 秒后把服务带崩）。
+    if (!Array.isArray(current.checkpoints)) {
+      clearInterval(timer);
+      jobTimers.delete(id);
+      return;
+    }
     if (index < current.checkpoints.length) {
       const checkpointsCopy = current.checkpoints.map((item) => ({ ...item }));
       checkpointsCopy[index].status = 'done';

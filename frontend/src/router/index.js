@@ -23,8 +23,8 @@ export const routes = [
   // 案例：左列表 + 右 dossier（对齐参照站），地图作为 dossier 里的内联卡片
   { path: '/cases', name: 'cases', component: () => import('@/views/app/CaseView.vue'),
     meta: { shell: 'app', access: 'public', titleKey: 'nav.cases' } },
-  { path: '/workbench', name: 'workbench', component: () => import('@/views/earth/Workbench.vue'),
-    meta: { shell: 'earth', access: 'auth', titleKey: 'nav.workbench' } },
+  { path: '/workbench', name: 'workbench', component: () => import('@/views/app/WorkbenchView.vue'),
+    meta: { shell: 'app', access: 'auth', titleKey: 'nav.workbench' } },
   { path: '/account', name: 'account', component: () => import('@/views/earth/PersonalCenter.vue'),
     meta: { shell: 'earth', access: 'auth', titleKey: 'nav.account' } },
   { path: '/admin', name: 'admin', component: () => import('@/views/admin/AdminConsole.vue'),
