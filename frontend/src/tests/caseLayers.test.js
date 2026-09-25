@@ -31,7 +31,7 @@ const view = {
   ],
   facts: {
     totals: { priority_sites: 147, coastal: 91, inland: 56, protected_table4: 108,
-      protected_bold_marks: 117, unprotected_table4: 39, species_reaching_1pct: 963,
+      protected_bold_marks: 117, unprotected_table4: 39, species_reaching_1pct: 959,
       sites_without_pc1: 26, prc_below_threshold: 2 }
   },
   timeline: {

@@ -29,7 +29,7 @@
  *  只公布"某个站点列了某个物种"这件事，以及 over_10pct / over_50pct 两个**布尔**标记；
  *  每个站点的**具体比例没有公布**。所以物种视图只做**站点选择**（≥1% 阈值的站点）
  *  与 10% / 50% 标注，不画比例、不按比例缩放点，也不复算百分比。
- *  另外该表 963 行的 nearly_1pct 列全部为 False（原文没有一行标它），
+ *  另外该表 959 行的 nearly_1pct 列全部为 False（原文没有一行标它），
  *  所以界面上不设"接近 1%"这一档 —— 没有的档位不编。
  *
  *  **注**：几何是**真实公布的坐标**，因此不带 `synthetic` 标记（那是合成/示意数据
@@ -172,7 +172,7 @@ function pc1Band(pc1) {
  */
 const speciesKey = (r) => `${r.english || ''}\u0000${r.scientific || ''}`;
 
-/** 物种表（963 行 = 站点 × 物种）→ 物种索引 + 逐站点的物种下标。
+/** 物种表（959 行 = 站点 × 物种）→ 物种索引 + 逐站点的物种下标。
  *
  *  返回的 perSite 里，每个站点的三个下标集合就是要素属性 sp / sp10 / sp50 的来源：
  *   · sp   该站点在表里列出的全部物种（"达到 1% 阈值"这件事由"被列出来"表达）；
@@ -183,21 +183,32 @@ const speciesKey = (r) => `${r.english || ''}\u0000${r.scientific || ''}`;
 function buildSpecies(speciesRows, siteIndexById) {
   const index = [];
   const byKey = new Map();
+  // 物种身份用**学名**：补充材料里同一个种偶尔有第二种英文写法（PDF 折行留下的
+  // 残片，如 Calidris pygmaea 的 1 行写成 'Sandpiper'）。按 (英文, 学名) 建索引会把
+  // 同一个种拆成两条，勺嘴鹬就会少算一处站点。这里按学名归并，英文名取出现次数最多
+  // 的写法作为规范名（不合并不同学名 —— 那才是替作者决定物种）。
+  const byScientific = new Map();
   const perSite = new Map();
   const flags = { over_10pct: 0, over_50pct: 0, nearly_1pct: 0 };
   const seen = new Set();
   let orphanRows = 0;
   for (const r of speciesRows) {
-    const key = speciesKey(r);
+    const key = r.scientific || speciesKey(r);
+    const spelling = r.english || '';
+    const tally = byScientific.get(key) || byScientific.set(key, new Map()).get(key);
+    tally.set(spelling, (tally.get(spelling) || 0) + 1);
     let entry = byKey.get(key);
     if (!entry) {
-      entry = { i: index.length, english: r.english || '', scientific: r.scientific || '', iucn: r.iucn || '' };
+      entry = { i: index.length, english: spelling, scientific: r.scientific || '', iucn: r.iucn || '' };
       byKey.set(key, entry);
       index.push(entry);
     } else if (!entry.iucn && r.iucn) {
       // 同一组合的续行有时空着 IUCN：取第一个非空值（不改物种身份，只补分类）
       entry.iucn = r.iucn;
     }
+    // 规范英文名 = 出现次数最多的写法（并列时取更长的那个，通常是完整名）
+    const best = [...tally.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0];
+    if (best && best[0]) entry.english = best[0];
     if (bool(r.over_10pct)) flags.over_10pct += 1;
     if (bool(r.over_50pct)) flags.over_50pct += 1;
     if (bool(r.nearly_1pct)) flags.nearly_1pct += 1;
@@ -207,7 +218,7 @@ function buildSpecies(speciesRows, siteIndexById) {
     if (!site) { site = { sp: new Set(), sp10: new Set(), sp50: new Set(), rows: 0, dups: 0 }; perSite.set(siteIndex, site); }
     site.rows += 1;
     // 原文里同一个 (站点, 物种) 组合出现过两次（rf106 / Swan Goose），
-    // 下标集合天然去重 —— 这里把去重后的组合数记下来，供"覆盖 963 行"的校验用。
+    // 下标集合天然去重 —— 这里把去重后的组合数记下来，供"覆盖 959 行"的校验用。
     const combo = `${siteIndex}\u0000${key}`;
     if (seen.has(combo)) site.dups += 1; else seen.add(combo);
     site.sp.add(entry.i);
@@ -285,7 +296,7 @@ function main() {
   }
   // 物种表是逐行的：站点数变了、或者有行对不上站点，都必须当场拦下来，
   // 否则界面上会出现"某物种选了 N 个站点"而没人知道 N 是从哪来的。
-  // 963 行里有 1 行是同一个 (站点, 物种) 组合的重复（原文如此）：
+  // 959 行里有 1 行是同一个 (站点, 物种) 组合的重复（原文如此）：
   // 要素上的下标集合去重，所以要比的是**去重后的组合数**，不是原始行数。
   const speciesRowTotal = features.reduce((sum, f) => sum + f.properties.sp.length, 0);
   if (speciesRowTotal !== species.uniqueRows) {
@@ -378,7 +389,7 @@ function main() {
       nearly_1pct_rows: species.flags.nearly_1pct,
       caveat: '补充材料只公布"该站点列了该物种"（≥1% 阈值）与 over_10pct / over_50pct 两个布尔标记；'
         + '各站点的具体比例未公布。因此本视图只做站点选择与 10% / 50% 标注，不按比例缩放点，也不复算百分比。'
-        + '表中 nearly_1pct 列 963 行全部为 False，故不设"接近 1%"档。'
+        + '表中 nearly_1pct 列 959 行全部为 False，故不设"接近 1%"档。'
         + '物种名与学名按原文照录（少数条目因原文换行被截断，如 "Lesser" / "Eurasian"），未做人工归并。'
         + `原文 ${speciesRows.length} 行里有 ${speciesRows.length - species.uniqueRows} 行是同一 (站点, 物种) 组合的重复，` +
           '站点上的物种集合按组合去重。'

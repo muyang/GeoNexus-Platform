@@ -1557,19 +1557,19 @@ test('几何接口：147 个真实点位、属性齐全、越权与越界都要�
   assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/water_change`)).status, 404);
 });
 
-test('物种索引：963 行覆盖 147 个站点，旗舰物种选中站点数与原文一致', async () => {
+test('物种索引：959 行覆盖 147 个站点，旗舰物种选中站点数与原文一致', async () => {
   await seedFlightway(['--public']);
   const view = (await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).data.view;
   const species = view.geometry.find((g) => g.name === 'sites').properties.species;
   assert.ok(species, '图层元数据要带物种索引');
-  // 963 行 = 站点 × 物种；其中 1 行是同一组合的重复（原文如此）
-  assert.equal(species.rows, 963);
-  assert.equal(species.rows_unique, 962);
+  // 959 行 = 站点 × 物种；其中 1 行是同一 (站点, 物种) 组合的重复（rf106 / Swan Goose，原文如此）
+  assert.equal(species.rows, 959);
+  assert.equal(species.rows_unique, 958);
   assert.equal(species.duplicate_rows, 1);
-  assert.equal(species.index.length, 187, '原文的 (english, scientific) 组合数');
-  assert.equal(species.over_10pct_rows, 99);
+  assert.equal(species.index.length, 119, '物种身份按学名归并后的种数（英文写法差异不拆成两条）');
+  assert.equal(species.over_10pct_rows, 98);
   assert.equal(species.over_50pct_rows, 24);
-  assert.equal(species.nearly_1pct_rows, 0, 'nearly_1pct 列 963 行全为 False：没有的档位不编');
+  assert.equal(species.nearly_1pct_rows, 0, 'nearly_1pct 列 959 行全为 False：没有的档位不编');
   assert.equal(species.sites_listed, 132, '147 个站里有 132 个在物种表里出现');
   assert.match(species.caveat, /比例未公布|未公布/);
 
@@ -1577,8 +1577,8 @@ test('物种索引：963 行覆盖 147 个站点，旗舰物种选中站点数�
   const index = species.index;
   // 覆盖：站点上的 sp 下标合计 = 去重后的组合数；两个布尔标记的行数也各自对得上
   const sum = (key) => fc.features.reduce((n, f) => n + (f.properties[key] || []).length, 0);
-  assert.equal(sum('sp'), 962, '站点上的物种组合合计必须等于去重后的 962');
-  assert.equal(sum('sp10'), 99);
+  assert.equal(sum('sp'), 958, '站点上的物种组合合计必须等于去重后的 958');
+  assert.equal(sum('sp10'), 98);
   assert.equal(sum('sp50'), 24);
   for (const feature of fc.features) {
     const { sp, sp10, sp50, site_id: siteId, species_count: count } = feature.properties;
@@ -1611,15 +1611,18 @@ test('物种索引：963 行覆盖 147 个站点，旗舰物种选中站点数�
   assert.deepEqual(pick('Spotted Greenshank', 'Tringa guttifer'),
     { sites: 26, countries: 6, over10: 3, over50: 1 });
   assert.deepEqual(pick('Spoon-billed Sandpiper', 'Calidris pygmaea'),
-    { sites: 13, countries: 2, over10: 1, over50: 0 });
+    { sites: 14, countries: 2, over10: 1, over50: 0 });
   assert.deepEqual(pick('Red-crowned Crane', 'Grus japonensis'),
     { sites: 6, countries: 1, over10: 2, over50: 3 });
   assert.deepEqual(pick('Siberian Crane', 'Leucogeranus leucogeranus'),
     { sites: 4, countries: 1, over10: 1, over50: 1 });
   assert.deepEqual(pick('Black-faced Spoonbill', 'Platalea minor'),
     { sites: 12, countries: 2, over10: 0, over50: 0 });
-  // 原文没给名字的条目照录，不用学名冒充物种名
-  assert.ok(index.some((e) => e.english === ''));
+  // 每个物种都必须有英文名与学名：学名靠斜体列切分、英文名折行会并回上一行，
+  // 所以现在不该再出现"只有学名没有英文名"的残条（此前有 1 条 Calidris alpina）
+  assert.ok(index.every((e) => e.english && e.scientific), '物种条目不该缺名');
+  // 同一个学名只出现一条：英文写法差异不拆成两个物种
+  assert.equal(new Set(index.map((e) => e.scientific)).size, index.length);
 });
 
 test('可见性分层：受限组成项在场时访客拿不到案例，也拿不到几何', async () => {
