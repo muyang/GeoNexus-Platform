@@ -1,5 +1,5 @@
 import { getBasemap } from '../basemaps'
-import { SIZE_BANDS, pc1Band, wetlandStyle } from '../caseStyle'
+import { SIZE_BANDS, passesSiteFilter, pc1Band, speciesStar, starText, wetlandStyle } from '../caseStyle'
 
 /** Cesium 后端：3D 地球（默认）。
  *
@@ -8,7 +8,7 @@ import { SIZE_BANDS, pc1Band, wetlandStyle } from '../caseStyle'
  *  需要真实地形/影像时再配 CESIUM_ION_TOKEN。
  *  GeoCard 覆盖范围画成地面矩形，与 MapLibre 后端保持同一套图层语义。 */
 export function createCesiumEngine(state) {
-  const { ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers } = state
+  const { ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, mountedEngine } = state
   let viewer = null
   let CesiumMod = null
   const entityByLayer = new Map()
@@ -99,6 +99,7 @@ export function createCesiumEngine(state) {
         const provider = layer && layer.imageryProvider
         if (frames >= READY_FRAMES && (!provider || provider.ready !== false)) markReady(`frames=${frames}`)
       })
+      mountedEngine.value = 'cesium'
       if (typeof window !== 'undefined') window.__gnxGlobe = viewer
       setTimeout(() => { if (!ready.value) { loading.value = false; slowBasemap.value = true; error.value = '地球瓦片加载较慢…' } }, TIMEOUT_MS)
       redraw()          // 补画可能在 viewer 就绪前就到达的图层
@@ -178,8 +179,13 @@ export function createCesiumEngine(state) {
    *  几何是异步加载的（GeoJsonDataSource.load 返回 Promise），所以与 bbox 那条
    *  同步路径分开；画不出来也不该影响底图。
    *
-   *  筛选（湿地类型开关注 + 只看未与保护地重叠）与面板用同一个 `overlay.siteFilter`：
-   *  面板筛掉的点，地球上也要消失 —— 两边不一致等于给出两个答案。 */
+   *  筛选（湿地类型开关注 + 只看未与保护地重叠 + 物种）与面板用同一个 `overlay.siteFilter`
+   *  与同一个 `passesSiteFilter()`：面板筛掉的点，地球上也要消失 ——
+   *  两边不一致等于给出两个答案。
+   *
+   *  物种视图（原文 Fig. 3 的视角）：选中物种后，只留原文列出它的站点，并给
+   *  over_10pct / over_50pct 的站点套**金色圆环**（一圈 = 超过 10%，两圈 = 超过 50%）。
+   *  **点的大小不变** —— 比例原文没公布，用大小去表达比例就是编数据。 */
   async function drawCaseGeometry(overlay) {
     const Cesium = CesiumMod
     if (!viewer || !Cesium) return
@@ -191,14 +197,9 @@ export function createCesiumEngine(state) {
     const geometry = (overlay && overlay.geometry) || {}
     const visible = (overlay && overlay.visible) || {}
     const filter = (overlay && overlay.siteFilter) || {}
-    const passesFilter = (props) => {
-      const type = props.wetland_type
-      if (type === 'coastal' || type === 'inland') {
-        if (Array.isArray(filter.types) && !filter.types.includes(type)) return false
-      } else if (Array.isArray(filter.types) && !filter.types.length) return false
-      if (filter.unprotectedOnly && props.protected === true) return false
-      return true
-    }
+    // 判定只有一份实现（caseStyle），面板与 2D 地图用的是同一个函数
+    const passesFilter = (props) => passesSiteFilter(props, filter)
+    const species = filter.species === null || filter.species === undefined ? null : Number(filter.species)
     const add = async (name, options) => {
       if (!geometry[name] || visible[name] === false) return
       const source = await Cesium.GeoJsonDataSource.load(geometry[name], options)
@@ -211,7 +212,10 @@ export function createCesiumEngine(state) {
       markerSymbol: 'o', markerColor: Cesium.Color.WHITE,
       markerSize: 28, stroke: Cesium.Color.WHITE.withAlpha(0.9), strokeWidth: 1
     })
+    let shown = 0
+    let rings = 0
     for (const source of caseDataSources.values()) {
+      const ringed = []
       for (const entity of source.entities.values) {
         const props = entity.properties && entity.properties.getValue
           ? entity.properties.getValue(Cesium.JulianDate.now()) : {}
@@ -228,14 +232,42 @@ export function createCesiumEngine(state) {
           entity.point.pixelSize = band.radius * 2
           entity.show = passesFilter(props)
         }
+        if (entity.show !== false) shown += 1
         const score = typeof props.pc1 === 'number' && props.pc1 !== null
           ? `PC1 ${props.pc1}`
           : (props.rank !== null && props.rank !== undefined ? `原文未公布分值（名次 ${props.rank}）` : '原文未公布分值')
+        // 选中物种时，点开一个站点能看到"原文对它的标注"；没选物种就不提这一档
+        const star = species === null ? 0 : speciesStar(props, species)
+        const starNote = star === 2 ? '　原文标注：★★（超过该物种种群 50%）'
+          : star === 1 ? '　原文标注：★（超过该物种种群 10%）' : ''
+        const speciesNote = species === null ? '' : `　原文列出该物种：${star ? '是' : '否'}`
         entity.description = `${props.name || props.site_id}　${props.country || ''}　${type.label}　${score}`
-          + `　达标物种 ${props.species_count}`
+          + `　达标物种 ${props.species_count}${speciesNote}${starNote}`
+        if (star) ringed.push({ entity, band, star })
+      }
+      // 金环：一圈 = 原文 over_10pct，两圈 = over_50pct（同心的两圈，不是更大的点）
+      if (species !== null) {
+        for (const item of ringed) {
+          for (const offset of (item.star === 2 ? [5, 10] : [5])) {
+            source.entities.add({
+              position: item.entity.position,
+              point: {
+                pixelSize: (item.band.radius + offset) * 2,
+                color: Cesium.Color.TRANSPARENT,
+                outlineColor: Cesium.Color.fromCssColorString('#ffd479'),
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            })
+            rings += 1
+          }
+        }
       }
     }
     document.documentElement.dataset.caseGeometry = String(caseDataSources.size)
+    // 给 CDP 断言用：地球实际显示了多少个站点、加了几圈金环
+    document.documentElement.dataset.caseSitesShown = String(shown)
+    document.documentElement.dataset.caseSpeciesRings = String(rings)
   }
   function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
     const Cesium = CesiumMod
@@ -341,6 +373,7 @@ export function createCesiumEngine(state) {
     viewer = null
     ready.value = false; loading.value = false; slowBasemap.value = false
     if (typeof window !== 'undefined') delete window.__gnxGlobe
+    if (mountedEngine.value === 'cesium') mountedEngine.value = ''
   }
 
   const retryBasemap = () => setBasemap(basemapId.value)

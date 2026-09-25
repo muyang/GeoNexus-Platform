@@ -26,6 +26,9 @@ const loading = ref(false)
 const basemapFailed = ref(false)
 const slowBasemap = ref(false)
 const error = ref('')
+//: 真正**挂上去**的引擎（不是"配置里选的那个"）。切换引擎/挂载失败时，
+//: 这句话术必须描述屏幕上实际是什么，否则会出现"Flat 的 2D 地图配一句『地球已就绪』"。
+const mountedEngine = ref('')
 const tilestats = ref({ errors: 0, lastError: '' })
 const basemapId = ref(DEFAULT_BASEMAP)
 const layers = ref([])
@@ -33,7 +36,7 @@ const layers = ref([])
 const caseOverlay = ref(null)
 let caseOverlayOpts = {}
 
-const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, caseOverlay }
+const state = { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, caseOverlay, mountedEngine }
 const engines = { maplibre: createMaplibreEngine(state), cesium: createCesiumEngine(state) }
 const active = () => engines[engine.value] || engines.cesium
 
@@ -54,7 +57,9 @@ async function loadSettings(force = false) {
 /** 地图状态的一句话说法：三个用到地图的页面（地图 / 案例 / 工作台）共用一套，
  *  免得同一个状态在三处写成三种话（改版前分别写"globe ready""未就绪""加载中…"）。 */
 const mapStatus = computed(() => {
-  if (ready.value) return { text: engine.value === 'cesium' ? '地球已就绪' : '地图已就绪', cls: 'tag-ok' }
+  // 以 mountedEngine 为准（回落到配置值）：标签必须与屏幕上那套渲染一致
+  const mounted = mountedEngine.value || engine.value
+  if (ready.value) return { text: mounted === 'cesium' ? '地球已就绪' : '地图已就绪', cls: 'tag-ok' }
   if (loading.value) return { text: '加载中…', cls: 'tag-mute' }
   if (basemapFailed.value) return { text: '底图不可用（图层仍可用）', cls: 'tag-bad' }
   if (slowBasemap.value) return { text: '底图较慢（图层仍可用）', cls: 'tag-warn' }
@@ -122,8 +127,8 @@ export function useMap() {
 
   return {
     // 状态
-    engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards, caseOverlay,
-    mapStatus,
+    engine, mountedEngine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats,
+    basemapId, layers, showGeoCards, caseOverlay, mapStatus,
     // 动作
     mount, destroy, setEngine, setProjection, loadSettings,
     syncLayers, syncCaseOverlay, clearCaseOverlay, replayCaseOverlay,

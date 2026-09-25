@@ -6,10 +6,12 @@ import { SIZE_BANDS, SIZE_BAND_ORDER, UNKNOWN_WETLAND, WETLAND_STYLE } from '../
 /** MapLibre 后端（矢量/栅格底图 + 2D 地图）。
  *  状态由 facade 注入，本模块不持有全局单例 —— 这样引擎可以在运行时切换。 */
 export function createMaplibreEngine(state, hooks = {}) {
-  const { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers } = state
+  const { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, mountedEngine } = state
   let loadTimer = null
   let featureClick = null
   let pendingOverlay = null
+  let pendingProvenance = false
+  let drawQueued = false
   let pendingFit = null
   let retried = false
   const TIMEOUT_MS = 8000
@@ -74,6 +76,7 @@ export function createMaplibreEngine(state, hooks = {}) {
       container, style: bm.style, center: [110, 30], zoom: 2.2, attributionControl: { compact: true }
     })
     if (typeof window !== 'undefined') window.__gnxMap = map.value   // 排障句柄（只读）
+    mountedEngine.value = 'maplibre'
     map.value.on('load', () => markReady('load'))
     map.value.on('style.load', () => markReady('style.load'))        // setStyle 后只会有这个
     map.value.on('idle', () => markReady('idle'))
@@ -126,7 +129,10 @@ export function createMaplibreEngine(state, hooks = {}) {
 
   /** 案例叠加层：AOI（L1）+ 组成项范围 + 血缘弧线（默认关）。 */
   /** 把 GeoJSON 画上地图：**颜色 = 湿地类型、大小 = PC1 分档**（MapLibre 直接用 geojson source）。
-   *  筛选条件取自 `overlay.siteFilter`，与面板列表同一套 —— 两边不一致等于给出两个答案。 */
+   *  筛选条件取自 `overlay.siteFilter`，与面板列表同一套 —— 两边不一致等于给出两个答案。
+   *  物种视图：几何表达式按 `sp` 数组筛站点，并按 `sp10` / `sp50` 叠两层金色圆环
+   *  （一圈 = 超过该物种种群 10%，两圈 = 超过 50%）。**圆的大小不变**：
+   *  比例原文没公布，用大小表达比例就是编数据。 */
   function drawCaseGeometry(overlay) {
     const mp = map.value
     if (!mp) return
@@ -139,7 +145,11 @@ export function createMaplibreEngine(state, hooks = {}) {
       ['!', ['in', ['get', 'wetland_type'], ['literal', ['coastal', 'inland']]]]]
     const expression = ['all', typeFilter]
     if (filter.unprotectedOnly) expression.push(['!=', ['get', 'protected'], true])
+    const species = filter.species === null || filter.species === undefined ? null : Number(filter.species)
+    if (species !== null) expression.push(['in', species, ['get', 'sp']])
     const ids = ['sites']
+    const ringLayerIds = ['case-sites-ring5', 'case-sites-ring10']
+    for (const id of ringLayerIds) if (mp.getLayer('lyr-' + id)) mp.removeLayer('lyr-' + id)
     for (const name of ids) {
       if (mp.getLayer('lyr-case-' + name)) mp.removeLayer('lyr-case-' + name)
       if (mp.getSource('src-case-' + name)) mp.removeSource('src-case-' + name)
@@ -159,31 +169,63 @@ export function createMaplibreEngine(state, hooks = {}) {
           'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.2,
           'circle-opacity': 0.95
         } })
+      // 金环：与 3D 地球同一套含义（一圈 = >10%，两圈 = >50%）。
+      // 原文两列**互斥**（没有一行同时为 True），所以内圈的判据是"sp10 或 sp50" ——
+      // 只按 sp10 筛的话，>50% 的站点会少画内圈，看起来就像只超过 10%。
+      if (species !== null) {
+        const ringFilters = [
+          [5, ['any', ['in', species, ['get', 'sp10']], ['in', species, ['get', 'sp50']]]],
+          [10, ['in', species, ['get', 'sp50']]]
+        ]
+        for (const [offset, ringFilter] of ringFilters) {
+          mp.addLayer({ id: `lyr-case-sites-ring${offset}`, type: 'circle', source: 'src-case-' + name,
+            // 注意：expression 本身就是 ['all', <条…>]，它的头不能再摊平进来，
+            // 否则得到 ['all','all',…] —— 'all' 是字符串而不是表达式，这层根本加不上。
+            filter: ['all', ...expression.slice(1), ringFilter], paint: {
+              'circle-radius': ['+', radiusMatch, offset],
+              'circle-color': 'rgba(0,0,0,0)',
+              'circle-stroke-color': '#ffd479', 'circle-stroke-width': 1.6
+            } })
+        }
+      }
     }
     document.documentElement.dataset.caseGeometry = String(
       ids.filter((name) => mp.getLayer('lyr-case-' + name)).length)
+    // 排障读数（与 3D 侧同名）：这一遍几何是用哪个物种下标画的
+    document.documentElement.dataset.caseSpecies = species === null ? '' : String(species)
+    // 与 3D 地球同名的一个读数：CDP 断言"物种筛选在 2D 里也真的画了环"
+    document.documentElement.dataset.caseSpeciesRings = String(
+      ['lyr-case-sites-ring5', 'lyr-case-sites-ring10'].filter((id) => mp.getLayer(id)).length)
   }
   function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
     if (onFeatureClick) featureClick = onFeatureClick
     pendingOverlay = overlay
+    pendingProvenance = provenance
     const mp = map.value
     if (!mp) return
     bindCaseClicks()
-    const draw = () => {
+    // 关键：画的时候**现读** pendingOverlay，而不是闭包里那次调用的 overlay。
+    // 早先写成 `const draw = () => {...overlay...}; mp.once('idle', draw)`，
+    // 样式还没装好时会把"当时那份"叠加层排进 idle 队列；样式好了以后几个排队的
+    // draw 依次触发，**最后跑的那个可能是旧的**（例如物种筛选前的那一份），
+    // 于是地图回到旧筛选：面板筛了物种、2D 地图上却看不出筛选（截图复核时抓到的）。
+    const drawLatest = () => {
+      const current = pendingOverlay
+      const showProvenance = pendingProvenance
       for (const id of ['case-aoi', 'case-components', 'case-arcs']) {
         if (mp.getLayer(`lyr-${id}`)) mp.removeLayer(`lyr-${id}`)
         if (mp.getSource(`src-${id}`)) mp.removeSource(`src-${id}`)
       }
-      if (!overlay) { document.documentElement.dataset.caseOverlay = '0'; return }
+      if (!current) { document.documentElement.dataset.caseOverlay = '0'; return }
       let drawn = 0
-      if (Array.isArray(overlay.aoi) && overlay.aoi.length === 4) {
+      if (Array.isArray(current.aoi) && current.aoi.length === 4) {
         mp.addSource('src-case-aoi', { type: 'geojson', data: { type: 'Feature',
-          geometry: { type: 'Polygon', coordinates: [bboxRing(overlay.aoi)] }, properties: {} } })
+          geometry: { type: 'Polygon', coordinates: [bboxRing(current.aoi)] }, properties: {} } })
         mp.addLayer({ id: 'lyr-case-aoi', type: 'fill', source: 'src-case-aoi',
           paint: { 'fill-color': '#57d7ff', 'fill-opacity': 0.18, 'fill-outline-color': '#8fe6ff' } })
         drawn += 1
       }
-      const boxes = (overlay.components || []).filter((c) => Array.isArray(c.bbox) && c.bbox.length === 4)
+      const boxes = (current.components || []).filter((c) => Array.isArray(c.bbox) && c.bbox.length === 4)
       if (boxes.length) {
         mp.addSource('src-case-components', { type: 'geojson', data: { type: 'FeatureCollection',
           features: boxes.map((c) => ({ type: 'Feature', properties: { role: c.role },
@@ -192,8 +234,8 @@ export function createMaplibreEngine(state, hooks = {}) {
           paint: { 'line-color': '#ffc65c', 'line-width': 1 } })
         drawn += boxes.length
       }
-      if (provenance && Array.isArray(overlay.aoi)) {
-        const centre = [(overlay.aoi[0] + overlay.aoi[2]) / 2, (overlay.aoi[1] + overlay.aoi[3]) / 2]
+      if (showProvenance && Array.isArray(current.aoi)) {
+        const centre = [(current.aoi[0] + current.aoi[2]) / 2, (current.aoi[1] + current.aoi[3]) / 2]
         mp.addSource('src-case-arcs', { type: 'geojson', data: { type: 'FeatureCollection',
           features: boxes.map((c) => ({ type: 'Feature', properties: { role: c.role },
             geometry: { type: 'LineString', coordinates: [
@@ -202,9 +244,18 @@ export function createMaplibreEngine(state, hooks = {}) {
           paint: { 'line-color': '#8fe6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] } })
       }
       document.documentElement.dataset.caseOverlay = String(drawn)
-      drawCaseGeometry(overlay)
+      // 画几何失败不能连累叠加层（AOI/组成项已经画上了）：如实记下错误，
+      // 与 Cesium 侧的 `dataset.caseGeometryError` 同名，排障脚本读同一个键。
+      try { drawCaseGeometry(current) } catch (e) {
+        document.documentElement.dataset.caseGeometryError = String(e && e.message ? e.message : e)
+        if (import.meta.env.DEV) console.error('[maplibre] 案例几何绘制失败:', e)
+      }
     }
-    if (mp.isStyleLoaded()) draw(); else mp.once('idle', draw)
+    // 样式没装好时只排一次；排队期间又来新叠加层就沿用同一张排队票（画的还是最新那份）
+    if (mp.isStyleLoaded()) { drawQueued = false; drawLatest(); return }
+    if (drawQueued) return
+    drawQueued = true
+    mp.once('idle', () => { drawQueued = false; drawLatest() })
   }
 
   function clearCaseOverlay() { syncCaseOverlay(null) }
@@ -255,6 +306,7 @@ export function createMaplibreEngine(state, hooks = {}) {
     if (map.value) { try { map.value.remove() } catch { /* 忽略 */ } }
     map.value = null; ready.value = false; loading.value = false; slowBasemap.value = false
     if (typeof window !== 'undefined') delete window.__gnxMap
+    if (mountedEngine.value === 'maplibre') mountedEngine.value = ''
   }
 
   return { mount, destroy, syncLayers, syncCaseOverlay, clearCaseOverlay, redraw, setVisible, setOpacity, fit, fitAll, setBasemap, retryBasemap, colorFor, setProjection: () => {} }

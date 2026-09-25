@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import { typeLabel, runTag, EMPTY } from '@/lib/labels'
 import {
-  GEOMETRY_LAYERS, SIZE_BANDS, SIZE_BAND_ORDER, UNKNOWN_WETLAND, WETLAND_STYLE, wetlandStyle
+  FLAGSHIP_SPECIES, GEOMETRY_LAYERS, SIZE_BANDS, SIZE_BAND_ORDER, SPECIES_CAVEAT,
+  UNKNOWN_WETLAND, WETLAND_STYLE, iucnTag, speciesKey, starText, wetlandStyle
 } from '@/composables/caseStyle'
 
 /** 案例图层面板：四级 LOD + 双时间轴 + 血缘弧线开关 + 报告联动。
@@ -14,7 +15,9 @@ import {
  *   · 血缘弧线**默认关**——一开就是一堆线，默认开等于默认看不清；
  *   · 两根时间轴**分开画**——数据时间与执行时间混在一根轴上会让人误判因果；
  *   · 非空间案例**不上地球**——硬塞到地图上只会给出一个假的位置；
- *   · 筛选条件与地球**同一套**（`l.siteFilter`）——面板筛了地球没筛，等于给出两个答案。 */
+ *   · 筛选条件与地球**同一套**（`l.siteFilter`）—— 面板筛了地球没筛，等于给出两个答案；
+ *   · 物种视图（原文 Fig. 3）只做**站点选择 + 10%/50% 标注**，不画比例 ——
+ *     比例原文没公布，用点的大小去表达比例就是编数据。 */
 
 const props = defineProps({
   layers: { type: Object, required: true }   // useCaseLayers() 的返回值
@@ -51,6 +54,20 @@ const protection = computed(() => {
 })
 
 const listRows = computed(() => l.visibleSites.value.slice(0, listLimit.value))
+
+/** 物种选择器：旗舰物种（论文里的重点鸟种）置顶，其余按选中站点数降序排在后面。 */
+const flagshipKeys = new Set(FLAGSHIP_SPECIES.map((f) => speciesKey(f.english, f.scientific)))
+const flagshipRows = computed(() => FLAGSHIP_SPECIES.map((f) => {
+  const row = l.speciesList.value.find((r) => r.key === speciesKey(f.english, f.scientific))
+  return { ...f, row }
+}))
+const otherSpecies = computed(() => l.speciesList.value
+  .filter((r) => !flagshipKeys.has(r.key))
+  .slice()
+  .sort((a, b) => b.siteCount - a.siteCount || a.label.localeCompare(b.label)))
+/** 选中物种的站点数 / 国家数：**从要素算出来的**，不是另抄一份数字。 */
+const selected = computed(() => l.speciesSelected.value)
+const speciesSelectValue = computed(() => (l.speciesOn.value === null ? '' : String(l.speciesOn.value)))
 const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
   ? `PC1 ${p.pc1}`
   : (p?.rank !== null && p?.rank !== undefined ? `名次 ${p.rank}` : '原文未公布分值'))
@@ -154,8 +171,76 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
             只看未与保护地重叠（<span class="mono">{{ l.protectionTotals.value.unprotected }}</span> 处）
           </label>
 
+          <!-- 物种视图：原文 Fig. 3 的视角 —— 选一个物种，只看它达到 1% 的站点 -->
+          <div class="species-box">
+            <div class="meta" style="margin-bottom:6px">
+              物种（原文 Fig. 3 的视角）· 与上面的筛选条件<b>叠加</b>生效
+            </div>
+            <div class="species-chips">
+              <button v-for="f in flagshipRows" :key="f.english" class="chip chip-btn" type="button"
+                      :class="{ on: l.speciesOn.value === f.row?.i }" :disabled="!f.row"
+                      :title="f.row ? `选中站点 ${f.row.siteCount} 处 / ${f.row.countryCount} 个国家` : '原文这份表里没有这个物种'"
+                      @click="l.selectSpecies(l.speciesOn.value === f.row?.i ? null : f.row?.i)">
+                {{ f.cn }} <span class="mono">{{ f.english }}</span>
+                <em v-if="f.row" class="mono">{{ f.row.siteCount }}</em>
+                <em v-else class="mono">—</em>
+              </button>
+            </div>
+
+            <div class="species-select">
+              <select :value="speciesSelectValue"
+                      @change="l.selectSpecies($event.target.value === '' ? null : Number($event.target.value))">
+                <option value="">全部物种（{{ l.speciesList.value.length }} 个组合）</option>
+                <optgroup label="论文旗舰物种">
+                  <option v-for="f in flagshipRows" :key="f.english" :value="f.row ? String(f.row.i) : ''"
+                          :disabled="!f.row">
+                    {{ f.cn }} {{ f.english }}<template v-if="f.row"> · {{ f.row.siteCount }} 处</template>
+                  </option>
+                </optgroup>
+                <optgroup label="全部物种（按选中站点数降序）">
+                  <option v-for="r in otherSpecies" :key="r.i" :value="String(r.i)">
+                    {{ r.label }}<template v-if="r.scientific"> · {{ r.scientific }}</template>
+                    · {{ r.siteCount }} 处
+                  </option>
+                </optgroup>
+              </select>
+              <button v-if="selected" class="icon-btn" type="button" title="清除物种筛选"
+                      @click="l.clearSpecies()">✕</button>
+            </div>
+
+            <!-- 选中后的读数：站点数 / 国家数 / 10% / 50% 标注数 -->
+            <div v-if="selected" class="species-facts">
+              <div>
+                <span class="name">{{ selected.label }}</span>
+                <em v-if="selected.scientific" class="mono" style="margin-left:6px">{{ selected.scientific }}</em>
+                <em v-if="iucnTag(selected.iucn)" class="tag" :class="iucnTag(selected.iucn).cls"
+                    style="margin-left:6px">{{ iucnTag(selected.iucn).text }}</em>
+              </div>
+              <div class="meta">
+                原文列出该物种的站点 <b class="mono">{{ selected.siteCount }}</b> / {{ l.siteFeatures.value.length }} 处 ·
+                涉及国家 <b class="mono">{{ selected.countryCount }}</b> 个
+                （{{ selected.countries.join('、') || '—' }}）
+              </div>
+              <div class="meta">
+                原文 <span class="mono">over_10pct</span> 标真的站点
+                <b class="mono">{{ selected.over10.length }}</b> 处 (<span class="star">★</span>) ·
+                <span class="mono">over_50pct</span> 标真的
+                <b class="mono">{{ selected.over50.length }}</b> 处 (<span class="star">★★</span>)
+              </div>
+              <div class="meta">
+                两列在原文里<b>互不重叠</b>（963 行里没有一行同时为真）：★ 与 ★★ 是两档各自的标注，
+                不是包含关系。
+              </div>
+              <div class="meta">
+                这些是<b>原文的布尔标记</b>，不是比例；具体比例原文未公布，所以点的大小仍按 PC1 分档，与物种无关。
+              </div>
+            </div>
+          </div>
+
           <!-- 图例：颜色说什么、大小说什么 -->
-          <div class="meta" style="margin-top:10px">图例 · 颜色 = 湿地类型，大小 = PC1 分值</div>
+          <div class="meta" style="margin-top:10px">
+            图例 · 颜色 = 湿地类型，大小 = PC1 分值<template v-if="selected">，金环 = 原文对该物种的 10% / 50% 标注</template>
+          </div>
           <div v-for="key in SIZE_BAND_ORDER" :key="key" class="legend-row">
             <i class="dot" :style="{ width: SIZE_BANDS[key].radius * 2 + 'px',
                                      height: SIZE_BANDS[key].radius * 2 + 'px',
@@ -165,6 +250,15 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
           <p class="meta" style="margin-top:4px">
             点的大小是<b>我们的分箱</b>（原文只给分值），边界写在这里；颜色只有沿海/内陆两类。
           </p>
+
+          <!-- 物种视图的图例：只讲有据可查的两件事 -->
+          <div v-if="selected" class="legend-row" style="align-items:flex-start">
+            <i class="ring" />
+            <span class="meta">
+              一圈金环 = 原文 <span class="mono">over_10pct</span>（超过该物种种群 10%）<br>
+              两圈金环 = 原文 <span class="mono">over_50pct</span>（超过 50%）；列表里写 <span class="star">★</span> / <span class="star">★★</span>
+            </span>
+          </div>
 
           <!-- 两个口径问题：照实写出来，不藏 -->
           <div class="caveat">
@@ -182,6 +276,18 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
             <p>
               <b>原始计数数据受限</b>：支撑 PC1 的逐笔水鸟计数由 Wetlands International 许可提供、
               论文声明未公开。本案例只呈现论文公开发表的站点级结果，<b>不复算</b> PC1。
+            </p>
+            <p>
+              <b>物种视图只有"站点选择"和两个布尔标注</b>：{{ SPECIES_CAVEAT.threshold }}
+              {{ SPECIES_CAVEAT.stars }} {{ SPECIES_CAVEAT.nearly }} {{ SPECIES_CAVEAT.names }}
+              <template v-if="l.sitesMeta.value && l.sitesMeta.value.species">
+                本图层收录原文 <span class="mono">{{ l.sitesMeta.value.species.rows }}</span> 行
+                （去重后 <span class="mono">{{ l.sitesMeta.value.species.rows_unique }}</span> 个站点 × 物种组合，
+                重复 <span class="mono">{{ l.sitesMeta.value.species.duplicate_rows }}</span> 行按原文保留计数），
+                其中 <span class="mono">over_10pct</span> <span class="mono">{{ l.sitesMeta.value.species.over_10pct_rows }}</span> 行、
+                <span class="mono">over_50pct</span> <span class="mono">{{ l.sitesMeta.value.species.over_50pct_rows }}</span> 行、
+                <span class="mono">nearly_1pct</span> <span class="mono">{{ l.sitesMeta.value.species.nearly_1pct_rows }}</span> 行。
+              </template>
             </p>
             <p v-if="l.sitesMeta.value && l.sitesMeta.value.source" class="meta">
               来源：{{ l.sitesMeta.value.source.citation }} DOI {{ l.sitesMeta.value.source.doi }}
@@ -227,6 +333,10 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
                 <div class="meta mono">
                   {{ f.properties.country }} · {{ scoreText(f.properties) }} · 达标物种 {{ f.properties.species_count }}
                   <template v-if="!f.properties.protected"> · 未与保护地重叠</template>
+                  <template v-if="starText(l.starOf(f))">
+                    · <span class="star">{{ starText(l.starOf(f)) }}</span>
+                    {{ l.starOf(f) === 2 ? '原文标注 &gt;50%' : '原文标注 &gt;10%' }}
+                  </template>
                 </div>
               </div>
             </div>
@@ -358,6 +468,21 @@ input[type='range'] { accent-color:#57d7ff }
 .site-row { padding:4px 6px; }
 .more { margin-top:6px; height:26px; padding:0 10px; border-radius:7px; cursor:pointer; color:inherit;
   font:inherit; font-size:12px; border:1px solid var(--e-line, rgba(255,255,255,.14)); background:transparent; }
+.species-box { margin-top:10px; padding:9px 10px; border-radius:8px;
+  border:1px solid rgba(255,212,121,.28); background:rgba(255,212,121,.05); }
+.species-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.species-chips .chip { height:26px; padding:0 9px; font-size:11.5px; }
+.species-chips .chip.on { border-color:#ffd479; color:#fff; }
+.species-chips .chip:disabled { opacity:.4; cursor:not-allowed; }
+.species-select { display:flex; gap:6px; align-items:center; margin-top:8px; }
+.species-select select { flex:1; min-width:0; height:30px; border-radius:8px; color:inherit; font:inherit;
+  font-size:12px; padding:0 6px; border:1px solid var(--e-line, rgba(255,255,255,.14));
+  background:rgba(255,255,255,.03); }
+.species-facts { margin-top:8px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+.species-facts .name { font-size:12.5px; font-weight:600; }
+.star { color:#ffd479; }
+.ring { display:inline-block; width:12px; height:12px; border-radius:50%; flex:none; margin-top:3px;
+  border:2px solid #ffd479; background:transparent; }
 .caveat { margin-top:10px; padding:8px 10px; border-radius:8px; font-size:11.5px; line-height:1.65;
   border:1px solid rgba(255,176,32,.35); background:rgba(255,176,32,.06); }
 .caveat p { margin:0 0 6px; }

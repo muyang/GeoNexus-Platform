@@ -14,6 +14,8 @@
  *    case_recipes   方案绑定（含方案全文 —— 图层视图靠它推导组成项与步骤）
  *    deliverables   四个交付物（站点表 / 取舍表 / 国别刻画表 / 报告）
  *    case_geometry  147 个真实点位（EPSG:4326，一个点就是一处优先湿地）
+ *                   —— 每个点还带**逐站点的物种下标**（sp / sp10 / sp50），
+ *                      用于"选一个物种、只看它达到 1% 的站点"这个视图
  *
  *  **两个必须如实说明的口径问题**（也写进了 facts，界面照实显示，不做人工对齐）：
  *
@@ -22,6 +24,13 @@
  *   2. 正文 Table 4 记 108 处「受保护或部分受保护」，补充材料 Table 3 的**粗体**标记
  *      是 117 处 —— 原文没有解释这 9 处的差异。两个数字都保留。
  *      （另有 2 处 PRC 站点分值低于原文声明的阈值 10 却仍在公开名单里，同样照实标注。）
+ *
+ *  **第三个口径问题（物种视图，原文 Fig. 3 的视角）**：补充材料的 site_species 表
+ *  只公布"某个站点列了某个物种"这件事，以及 over_10pct / over_50pct 两个**布尔**标记；
+ *  每个站点的**具体比例没有公布**。所以物种视图只做**站点选择**（≥1% 阈值的站点）
+ *  与 10% / 50% 标注，不画比例、不按比例缩放点，也不复算百分比。
+ *  另外该表 963 行的 nearly_1pct 列全部为 False（原文没有一行标它），
+ *  所以界面上不设"接近 1%"这一档 —— 没有的档位不编。
  *
  *  **注**：几何是**真实公布的坐标**，因此不带 `synthetic` 标记（那是合成/示意数据
  *  的约定）。来源写在图层元数据与 facts 里。
@@ -154,11 +163,68 @@ function pc1Band(pc1) {
   return 'xs';
 }
 
-/** 站点 CSV → GeoJSON（147 个 Point，EPSG:4326，坐标为论文公布的中心点）。 */
-function buildSites(rows) {
-  const features = rows.map((r) => {
+/** 物种的身份键：**原样**用补充材料的 (english, scientific) 组合。
+ *
+ *  为什么不做人工归并：这份表是论文表格解析出来的，原文换行会把一个名字切成两半 ——
+ *  English 列留下 "Lesser"、"Eurasian"，后半截粘到 Scientific 列变成
+ *  "SandploverCharadrius mongolus"。归并这些碎片意味着**我们来决定**它们是不是同一个物种，
+ *  那就是在编物种。所以键就是原文的组合，界面照录，并把数据质量问题写在面板上。
+ */
+const speciesKey = (r) => `${r.english || ''}\u0000${r.scientific || ''}`;
+
+/** 物种表（963 行 = 站点 × 物种）→ 物种索引 + 逐站点的物种下标。
+ *
+ *  返回的 perSite 里，每个站点的三个下标集合就是要素属性 sp / sp10 / sp50 的来源：
+ *   · sp   该站点在表里列出的全部物种（"达到 1% 阈值"这件事由"被列出来"表达）；
+ *   · sp10 原文 over_10pct = True 的组合；
+ *   · sp50 原文 over_50pct = True 的组合。
+ *  下标指向 index 数组，前端拿它做筛选与 ★/★★ 标注。
+ */
+function buildSpecies(speciesRows, siteIndexById) {
+  const index = [];
+  const byKey = new Map();
+  const perSite = new Map();
+  const flags = { over_10pct: 0, over_50pct: 0, nearly_1pct: 0 };
+  const seen = new Set();
+  let orphanRows = 0;
+  for (const r of speciesRows) {
+    const key = speciesKey(r);
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = { i: index.length, english: r.english || '', scientific: r.scientific || '', iucn: r.iucn || '' };
+      byKey.set(key, entry);
+      index.push(entry);
+    } else if (!entry.iucn && r.iucn) {
+      // 同一组合的续行有时空着 IUCN：取第一个非空值（不改物种身份，只补分类）
+      entry.iucn = r.iucn;
+    }
+    if (bool(r.over_10pct)) flags.over_10pct += 1;
+    if (bool(r.over_50pct)) flags.over_50pct += 1;
+    if (bool(r.nearly_1pct)) flags.nearly_1pct += 1;
+    const siteIndex = siteIndexById.get(r.site_id);
+    if (siteIndex === undefined) { orphanRows += 1; continue; }
+    let site = perSite.get(siteIndex);
+    if (!site) { site = { sp: new Set(), sp10: new Set(), sp50: new Set(), rows: 0, dups: 0 }; perSite.set(siteIndex, site); }
+    site.rows += 1;
+    // 原文里同一个 (站点, 物种) 组合出现过两次（rf106 / Swan Goose），
+    // 下标集合天然去重 —— 这里把去重后的组合数记下来，供"覆盖 963 行"的校验用。
+    const combo = `${siteIndex}\u0000${key}`;
+    if (seen.has(combo)) site.dups += 1; else seen.add(combo);
+    site.sp.add(entry.i);
+    if (bool(r.over_10pct)) site.sp10.add(entry.i);
+    if (bool(r.over_50pct)) site.sp50.add(entry.i);
+  }
+  return { index, perSite, flags, orphanRows, uniqueRows: seen.size };
+}
+
+/** 站点 CSV → GeoJSON（147 个 Point，EPSG:4326，坐标为论文公布的中心点）。
+ *  `species.perSite` 用站点在 CSV 里的行序作键（与 features 数组一一对应）。 */
+function buildSites(rows, species) {
+  const sorted = (set) => [...(set || [])].sort((a, b) => a - b);
+  const features = rows.map((r, rowIndex) => {
     const pc1 = num(r.pc1);
     const rank = num(r.rank);
+    const here = (species && species.perSite.get(rowIndex)) || { sp: new Set(), sp10: new Set(), sp50: new Set() };
     return {
       type: 'Feature',
       properties: {
@@ -178,7 +244,12 @@ function buildSites(rows) {
         designations: r.designations || '',
         threatened: r.threatened || '',
         // 原文只对"没有 PC1 的站点"给了叙述性重要性说明
-        importance: r.importance || ''
+        importance: r.importance || '',
+        // 物种视图（原文 Fig. 3 的视角）：下标指向图层元数据的 species.index。
+        // 只有"被列出来"这个事实 + 两个布尔标记，没有比例 —— 比例原文没公布。
+        sp: sorted(here.sp),
+        sp10: sorted(here.sp10),
+        sp50: sorted(here.sp50)
       },
       geometry: { type: 'Point', coordinates: [Number(r.lon), Number(r.lat)] }
     };
@@ -206,9 +277,38 @@ function main() {
   const siteRows = readCsv(path.join(rfiDir, 'sites.csv'));
   const countryRows = readCsv(path.join(rfiDir, 'country_summary.csv'));
   const speciesRows = readCsv(path.join(rfiDir, 'site_species.csv'));
-  const { features, bbox } = buildSites(siteRows);
+  const siteIndexById = new Map(siteRows.map((r, i) => [r.site_id, i]));
+  const species = buildSpecies(speciesRows, siteIndexById);
+  const { features, bbox } = buildSites(siteRows, species);
   if (features.length !== 147) {
     throw new Error(`站点数不是 147（实际 ${features.length}）：数据集变了就要重新核对原文`);
+  }
+  // 物种表是逐行的：站点数变了、或者有行对不上站点，都必须当场拦下来，
+  // 否则界面上会出现"某物种选了 N 个站点"而没人知道 N 是从哪来的。
+  // 963 行里有 1 行是同一个 (站点, 物种) 组合的重复（原文如此）：
+  // 要素上的下标集合去重，所以要比的是**去重后的组合数**，不是原始行数。
+  const speciesRowTotal = features.reduce((sum, f) => sum + f.properties.sp.length, 0);
+  if (speciesRowTotal !== species.uniqueRows) {
+    throw new Error(`物种表覆盖不全：站点要素合计 ${speciesRowTotal} 个组合 ≠ 表里去重后 ${species.uniqueRows} 个`);
+  }
+  const totalDups = [...species.perSite.values()].reduce((sum, s) => sum + s.dups, 0);
+  if (speciesRows.length - species.uniqueRows !== totalDups) {
+    // 重复行变多/变少都要重新核对原文（现有的那条是 rf106 / Swan Goose）
+    throw new Error(`物种表的重复行数对不上：原始 ${speciesRows.length} - 去重 ${species.uniqueRows} ≠ 逐站点重复 ${totalDups}`);
+  }
+  if (species.orphanRows) {
+    throw new Error(`物种表里有 ${species.orphanRows} 行的 site_id 在站点表里不存在`);
+  }
+  for (const [rowIndex, f] of features.entries()) {
+    const site = species.perSite.get(rowIndex) || { rows: 0, dups: 0 };
+    // 站点表的 species_count 是**原始行数**（rf106 记 16 行，其中 1 行重复）
+    if (site.rows !== f.properties.species_count) {
+      throw new Error(`${f.properties.site_id} 的物种原始行数 ${site.rows} ≠ 站点表的 species_count ${f.properties.species_count}`);
+    }
+    // 要素上的下标是去重后的组合数
+    if (f.properties.sp.length + site.dups !== site.rows) {
+      throw new Error(`${f.properties.site_id} 的物种组合数对不上：${f.properties.sp.length} + 重复 ${site.dups} ≠ 行数 ${site.rows}`);
+    }
   }
 
   const coastal = features.filter((f) => f.properties.wetland_type === 'coastal').length;
@@ -263,7 +363,26 @@ function main() {
       protected: '与保护地重叠 = 补充材料 Table 3 的粗体标记'
     },
     counts: { total: features.length, coastal, inland, protected: protectedBold,
-      unprotected: features.length - protectedBold, no_pc1: noScore }
+      unprotected: features.length - protectedBold, no_pc1: noScore },
+    // 物种视图（原文 Fig. 3 的视角）：index 是物种清单，要素属性里的 sp/sp10/sp50 是下标。
+    // 比例**不在**这里 —— 原文只公布"达到 1% 的站点"和两个布尔标记。
+    species: {
+      index: species.index,
+      rows: speciesRows.length,
+      rows_unique: species.uniqueRows,
+      duplicate_rows: speciesRows.length - species.uniqueRows,
+      species: species.index.length,
+      sites_listed: features.filter((f) => f.properties.sp.length > 0).length,
+      over_10pct_rows: species.flags.over_10pct,
+      over_50pct_rows: species.flags.over_50pct,
+      nearly_1pct_rows: species.flags.nearly_1pct,
+      caveat: '补充材料只公布"该站点列了该物种"（≥1% 阈值）与 over_10pct / over_50pct 两个布尔标记；'
+        + '各站点的具体比例未公布。因此本视图只做站点选择与 10% / 50% 标注，不按比例缩放点，也不复算百分比。'
+        + '表中 nearly_1pct 列 963 行全部为 False，故不设"接近 1%"档。'
+        + '物种名与学名按原文照录（少数条目因原文换行被截断，如 "Lesser" / "Eurasian"），未做人工归并。'
+        + `原文 ${speciesRows.length} 行里有 ${speciesRows.length - species.uniqueRows} 行是同一 (站点, 物种) 组合的重复，` +
+          '站点上的物种集合按组合去重。'
+    }
   };
 
   // 2) 产物搬到平台能受控读取的地方（ARTIFACT_ROOTS 覆盖 uploads/）
@@ -437,6 +556,16 @@ function main() {
       unprotected: features.length - protectedBold,
       without_pc1: noScore,
       prc_below_threshold: belowThreshold
+    },
+    species: {
+      rows: speciesRows.length,
+      rows_unique: species.uniqueRows,
+      duplicate_rows: speciesRows.length - species.uniqueRows,
+      species_listed: species.index.length,
+      sites_listed: features.filter((f) => f.properties.sp.length > 0).length,
+      over_10pct_rows: species.flags.over_10pct,
+      over_50pct_rows: species.flags.over_50pct,
+      nearly_1pct_rows: species.flags.nearly_1pct
     },
     files_copied_to: targetDir,
     database: dbPath,

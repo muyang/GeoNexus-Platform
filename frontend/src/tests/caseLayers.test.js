@@ -40,7 +40,20 @@ const view = {
   },
   geometry: [
     { name: 'sites', kind: 'priority-sites', url: '/api/cases/case-1/geometry/sites',
-      properties: { title: 'EAAF 优先湿地（147 处）', source: { doi: '10.1038/s41598-025-31727-2' } } }
+      properties: {
+        title: 'EAAF 优先湿地（147 处）',
+        source: { doi: '10.1038/s41598-025-31727-2' },
+        // 物种清单来自图层元数据；每个要素的 sp / sp10 / sp50 是它的下标
+        species: {
+          rows: 6, rows_unique: 6, duplicate_rows: 0,
+          over_10pct_rows: 3, over_50pct_rows: 1, nearly_1pct_rows: 0,
+          index: [
+            { i: 0, english: 'Spotted Greenshank', scientific: 'Tringa guttifer', iucn: 'EN' },
+            { i: 1, english: 'Spoon-billed Sandpiper', scientific: 'Calidris pygmaea', iucn: 'CR' },
+            { i: 2, english: 'Lesser', scientific: 'SandploverCharadrius mongolus', iucn: '' }
+          ]
+        }
+      } }
   ],
   layers: [
     { level: 'L1', kind: 'aoi' },
@@ -61,17 +74,21 @@ const geometryFixtures = {
   // 真实数据的要素不带 synthetic：界面上的"合成为示意"标注不该出现
   sites: { type: 'FeatureCollection', bbox: [89.7, -10.05, 140.8, 50.2], features: [
     { type: 'Feature', properties: { site_id: 'rf001', name: 'Eastern Sundarbans', country: 'Bangladesh',
-      wetland_type: 'coastal', protected: true, pc1: 42, rank: null, pc1_band: 'lg', species_count: 3,
-      designations: '', threatened: 'CR' }, geometry: { type: 'Point', coordinates: [89.7, 22] } },
+      wetland_type: 'coastal', protected: true, pc1: 42, rank: null, pc1_band: 'lg', species_count: 2,
+      designations: '', threatened: 'CR', sp: [0, 1], sp10: [0], sp50: [] },
+      geometry: { type: 'Point', coordinates: [89.7, 22] } },
     { type: 'Feature', properties: { site_id: 'rf052', name: 'Yalu Jiang', country: 'PRC',
-      wetland_type: 'coastal', protected: false, pc1: 9.29, rank: null, pc1_band: 'sm', species_count: 12,
-      designations: 'FR', threatened: 'EN,VU' }, geometry: { type: 'Point', coordinates: [124.4, 39.9] } },
+      wetland_type: 'coastal', protected: false, pc1: 9.29, rank: null, pc1_band: 'sm', species_count: 1,
+      designations: 'FR', threatened: 'EN,VU', sp: [0], sp10: [0], sp50: [0] },
+      geometry: { type: 'Point', coordinates: [124.4, 39.9] } },
     { type: 'Feature', properties: { site_id: 'rf104', name: 'Khar-Us Lake', country: 'Mongolia',
-      wetland_type: 'inland', protected: true, pc1: null, rank: 1, pc1_band: 'rank', species_count: 27,
-      designations: 'FR', threatened: 'VU' }, geometry: { type: 'Point', coordinates: [92.17, 47.75] } },
+      wetland_type: 'inland', protected: true, pc1: null, rank: 1, pc1_band: 'rank', species_count: 1,
+      designations: 'FR', threatened: 'VU', sp: [1], sp10: [], sp50: [] },
+      geometry: { type: 'Point', coordinates: [92.17, 47.75] } },
     { type: 'Feature', properties: { site_id: 'rf120', name: 'Palawan wetland', country: 'Philippines',
-      wetland_type: 'inland', protected: false, pc1: 1, rank: null, pc1_band: 'xs', species_count: 2,
-      designations: '', threatened: '' }, geometry: { type: 'Point', coordinates: [118.5, 9.8] } }
+      wetland_type: 'inland', protected: false, pc1: 1, rank: null, pc1_band: 'xs', species_count: 1,
+      designations: '', threatened: '', sp: [2], sp10: [], sp50: [] },
+      geometry: { type: 'Point', coordinates: [118.5, 9.8] } }
   ] }
 }
 
@@ -205,7 +222,8 @@ describe('案例图层：四级 LOD', () => {
     l.toggleWetland('inland', false)
     expect(drawn.overlays.length).toBeGreaterThan(before)
     expect(l.visibleSites.value.map((f) => f.properties.site_id)).toEqual(['rf001', 'rf052'])
-    expect(drawn.overlays.at(-1).overlay.siteFilter).toEqual({ types: ['coastal'], unprotectedOnly: false })
+    expect(drawn.overlays.at(-1).overlay.siteFilter)
+      .toEqual({ types: ['coastal'], unprotectedOnly: false, species: null })
 
     // 只看未与保护地重叠：把 protected === true 的剔除
     l.toggleWetland('inland', true)
@@ -213,6 +231,74 @@ describe('案例图层：四级 LOD', () => {
     expect(l.visibleSites.value.map((f) => f.properties.site_id)).toEqual(['rf052', 'rf120'])
     expect(l.hiddenByFilter.value).toBe(2)
     expect(drawn.overlays.at(-1).overlay.siteFilter.unprotectedOnly).toBe(true)
+  })
+
+  it('物种清单的计数从要素算出来：站点数、国家数、10% / 50% 标注数', async () => {
+    const { useCaseLayers } = await import('@/composables/caseLayers')
+    const l = useCaseLayers()
+    await l.load('case-1')
+    const list = l.speciesList.value
+    expect(list.map((r) => r.label)).toEqual([
+      'Spotted Greenshank', 'Spoon-billed Sandpiper', 'Lesser'])
+    // 斑腿鹬：两个站点（孟加拉 + 中国），其中 2 处原文标 >10%、1 处标 >50%
+    const greenshank = list[0]
+    expect(greenshank.siteCount).toBe(2)
+    expect(greenshank.countries).toEqual(['Bangladesh', 'PRC'])
+    expect(greenshank.over10.length).toBe(2)
+    expect(greenshank.over50.length).toBe(1)
+    // 原文没给名字的条目如实写出来，不拿学名冒充物种名
+    expect(list[2].scientific).toBe('SandploverCharadrius mongolus')
+    expect(l.speciesOn.value).toBeNull()
+  })
+
+  it('选一个物种：面板列表与地球同时只剩这些站点，且能和其它筛选叠加', async () => {
+    const { useCaseLayers } = await import('@/composables/caseLayers')
+    const l = useCaseLayers()
+    await l.load('case-1')
+    expect(l.visibleSites.value.length).toBe(4)
+
+    // 选斑腿鹬（下标 0）→ 只剩原文列出它的两个站点，并重新画一次给地球
+    const before = drawn.overlays.length
+    l.selectSpecies(0)
+    expect(drawn.overlays.length).toBeGreaterThan(before)
+    expect(l.visibleSites.value.map((f) => f.properties.site_id)).toEqual(['rf001', 'rf052'])
+    expect(drawn.overlays.at(-1).overlay.siteFilter.species).toBe(0)
+    expect(l.hiddenByFilter.value).toBe(2)
+    expect(l.speciesSelected.value.label).toBe('Spotted Greenshank')
+    expect(l.speciesSelected.value.countryCount).toBe(2)
+
+    // 叠加：再关掉沿海，就没有站点同时满足（物种筛选不会被覆盖掉）
+    l.toggleWetland('coastal', false)
+    expect(l.visibleSites.value.length).toBe(0)
+    expect(drawn.overlays.at(-1).overlay.siteFilter)
+      .toEqual({ types: ['inland'], unprotectedOnly: false, species: 0 })
+    l.toggleWetland('coastal', true)
+
+    // 换物种：勺嘴鹬只有 rf001（沿海）与 rf104（内陆），用"只看未与保护地重叠"再叠一层
+    l.selectSpecies(1)
+    expect(l.visibleSites.value.map((f) => f.properties.site_id)).toEqual(['rf001', 'rf104'])
+    l.unprotectedOnly.value = true
+    expect(l.visibleSites.value.length).toBe(0)
+
+    // 清空物种：回到全部
+    l.unprotectedOnly.value = false
+    l.clearSpecies()
+    expect(l.speciesOn.value).toBeNull()
+    expect(l.visibleSites.value.length).toBe(4)
+    expect(drawn.overlays.at(-1).overlay.siteFilter.species).toBeNull()
+  })
+
+  it('★ / ★★ 来自原文的两个布尔列，不是比例', async () => {
+    const { useCaseLayers } = await import('@/composables/caseLayers')
+    const l = useCaseLayers()
+    await l.load('case-1')
+    const byId = (id) => l.siteFeatures.value.find((f) => f.properties.site_id === id)
+    l.selectSpecies(0)
+    expect(l.starOf(byId('rf052'))).toBe(2, 'sp50 ⇒ ★★')
+    expect(l.starOf(byId('rf001'))).toBe(1, 'sp10 ⇒ ★')
+    // 没选物种时不给任何星：星是"该物种在原文明标超过 10%/50%"这件事
+    l.clearSpecies()
+    expect(l.starOf(byId('rf052'))).toBe(0)
   })
 
   it('点选地点与图层开关都会重画', async () => {
@@ -265,5 +351,21 @@ describe('案例样式：论文数据的编码', () => {
     expect(wetlandStyle('coastal').label).toBe('沿海湿地')
     expect(wetlandStyle('inland').color).not.toBe(wetlandStyle('coastal').color)
     expect(wetlandStyle('unknown').label).toContain('未标注')
+  })
+
+  it('物种筛选是"站点选择"，未知下标与缺失数组都不放行', async () => {
+    const { passesSiteFilter, speciesStar, speciesKey } = await import('@/composables/caseStyle')
+    const site = { wetland_type: 'coastal', protected: false, sp: [3, 7], sp10: [7], sp50: [] }
+    // 不传物种 = 不筛（默认看全部）
+    expect(passesSiteFilter(site, { types: ['coastal'] })).toBe(true)
+    expect(passesSiteFilter(site, { types: ['coastal'], species: null })).toBe(true)
+    expect(passesSiteFilter(site, { types: ['coastal'], species: 3 })).toBe(true)
+    expect(passesSiteFilter(site, { types: ['coastal'], species: 4 })).toBe(false)
+    // 要素没有 sp 数组（老版本几何）时也不放行，而不是"当作全部都算"
+    expect(passesSiteFilter({ wetland_type: 'coastal' }, { types: ['coastal'], species: 0 })).toBe(false)
+    expect(speciesStar(site, 7)).toBe(1)
+    expect(speciesStar(site, 3)).toBe(0)
+    expect(speciesStar(site, null)).toBe(0)
+    expect(speciesKey('a', 'b')).not.toBe(speciesKey('ab', ''))
   })
 })

@@ -2,7 +2,8 @@ import { computed, ref, watch } from 'vue'
 import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
 import {
-  GEOMETRY_LAYERS, protectionCounts, sortedSiteFeatures, syntheticNotice, wetlandCounts
+  GEOMETRY_LAYERS, buildSpeciesList, passesSiteFilter, protectionCounts, sortedSiteFeatures,
+  speciesStar, syntheticNotice, wetlandCounts
 } from '@/composables/caseStyle'
 
 /** 案例图层：四级 LOD + 双时间轴 + 血缘弧线。
@@ -17,9 +18,13 @@ import {
  *   3. **血缘弧线**：默认**关**。一开就是一堆线，默认开等于默认看不清；
  *      而且只画当前选中的那一个案例（画全部案例的弧线既慢又没意义）。
  *
- *  **筛选也是数据面的一部分**：湿地类型与"只看未与保护地重叠"两个开关既过滤面板
- *  列表，也交给引擎过滤地球上的点 —— 两边用同一个 `siteFilter`，不允许"面板筛了、
- *  地球没筛"。非空间案例（没有 bbox）不进地球：它们进侧栏。
+ *  **筛选也是数据面的一部分**：湿地类型、"只看未与保护地重叠"、以及**物种**三个开关
+ *  既过滤面板列表，也交给引擎过滤地球上的点 —— 两边用同一个 `siteFilter`，
+ *  不允许"面板筛了、地球没筛"。非空间案例（没有 bbox）不进地球：它们进侧栏。
+ *
+ *  **物种视图（原文 Fig. 3 的视角）**：选一个物种 → 只留补充材料列出它的站点，
+ *  并按原文的 over_10pct / over_50pct 标 ★ / ★★。比例原文没公布，所以**不按比例缩放点**：
+ *  点的大小仍然只表示 PC1 分档。三个筛选条件是**叠加**的（AND），不是互相替换。
  */
 
 export function useCaseLayers() {
@@ -35,9 +40,11 @@ export function useCaseLayers() {
   /** 被点选的地点（点地图上的点或点列表里的行都会设它） */
   const selectedSite = ref(null)
 
-  // 筛选：按湿地类型（颜色）与保护状态。默认全看 —— 先看全貌，再收窄。
+  // 筛选：按湿地类型（颜色）、保护状态与物种。默认全看 —— 先看全貌，再收窄。
   const wetlandOn = ref({ coastal: true, inland: true })
   const unprotectedOnly = ref(false)
+  /** 选中的物种：物种清单里的下标（null = 不按物种筛）。 */
+  const speciesOn = ref(null)
 
   // 四级 LOD：默认只开 L1+L2（先看清范围与步骤），L3/L4 随选择展开。
   const levelsOn = ref({ L1: true, L2: true, L3: true, L4: true })
@@ -82,24 +89,30 @@ export function useCaseLayers() {
   const sitesMeta = computed(() => sitesLayer.value?.properties || sitesLayer.value?.metadata || {})
   const wetlandTotals = computed(() => wetlandCounts(sitesLayer.value))
   const protectionTotals = computed(() => protectionCounts(sitesLayer.value))
-  /** 筛选条件（面板与引擎共用）：类型开关 + 只看未与保护地重叠 */
+  /** 物种清单（187 个原文物种组合）与每个物种选中的站点数、国家数。 */
+  const speciesList = computed(() => buildSpeciesList(sitesLayer.value))
+  /** 当前选中的物种（含它选中的站点下标与 10% / 50% 站点）。 */
+  const speciesSelected = computed(() => (
+    speciesOn.value === null ? null : speciesList.value[speciesOn.value] || null
+  ))
+  /** 筛选条件（面板与引擎共用）：类型开关 + 只看未与保护地重叠 + 物种 */
   const siteFilter = computed(() => ({
     types: Object.keys(wetlandOn.value).filter((k) => wetlandOn.value[k]),
-    unprotectedOnly: unprotectedOnly.value
+    unprotectedOnly: unprotectedOnly.value,
+    species: speciesOn.value
   }))
   /** 通过筛选的站点：面板列这个，引擎也画这个 */
   const visibleSites = computed(() => siteFeatures.value.filter(passesFilter))
   const hiddenByFilter = computed(() => siteFeatures.value.length - visibleSites.value.length)
 
+  // 判定只有一个实现（caseStyle 的 passesSiteFilter），面板、地球、2D 地图共用
   function passesFilter(feature) {
-    const props = feature?.properties || {}
-    const type = props.wetland_type
-    // 只有沿海/内陆两类受开关控制；未标注类型的点跟着"至少开一类"走，不被静默丢掉
-    if (type === 'coastal' || type === 'inland') {
-      if (wetlandOn.value[type] === false) return false
-    } else if (!siteFilter.value.types.length) return false
-    if (unprotectedOnly.value && props.protected === true) return false
-    return true
+    return passesSiteFilter(feature?.properties, siteFilter.value)
+  }
+
+  /** 某个站点在当前选中物种下的标注档位：0 未列出 / 1 ★ / 2 ★★。 */
+  function starOf(feature) {
+    return speciesStar(feature?.properties, speciesOn.value)
   }
 
   function pushOverlay() {
@@ -156,6 +169,13 @@ export function useCaseLayers() {
     geometryOn.value = { ...geometryOn.value, [name]: next }
   }
 
+  /** 选中 / 取消选中一个物种（物种下标，null = 不筛）。 */
+  function selectSpecies(index) {
+    const next = index === null || index === undefined ? null : Number(index)
+    speciesOn.value = Number.isNaN(next) ? null : next
+  }
+  function clearSpecies() { speciesOn.value = null }
+
   /** 湿地类型开关（颜色图例点一下就能只留一类）。 */
   function toggleWetland(type, on) {
     if (type !== 'coastal' && type !== 'inland') return
@@ -172,6 +192,7 @@ export function useCaseLayers() {
     selectedSite.value = null
     wetlandOn.value = { coastal: true, inland: true }
     unprotectedOnly.value = false
+    speciesOn.value = null
     error.value = ''
     if (!caseId) { view.value = null; clearCaseOverlay(); return null }
     loading.value = true
@@ -273,13 +294,14 @@ export function useCaseLayers() {
   watch(provenanceOn, pushOverlay, { flush: 'sync' })
   watch(levelsOn, pushOverlay, { deep: true, flush: 'sync' })
   watch(geometryOn, pushOverlay, { deep: true, flush: 'sync' })
-  watch([wetlandOn, unprotectedOnly], pushOverlay, { deep: true, flush: 'sync' })
+  watch([wetlandOn, unprotectedOnly, speciesOn], pushOverlay, { deep: true, flush: 'sync' })
 
   return {
     view, loading, error, spatial, steps, groups, reportLayer, components, arclines, timeline,
     levelsOn, provenanceOn, stepIndex, playing, currentStep, selectedDeliverable,
     geometry, geometryOn, geometryError, sitesLayer, sitesMeta, siteFeatures, visibleSites,
     hiddenByFilter, wetlandTotals, protectionTotals, wetlandOn, unprotectedOnly, siteFilter,
+    speciesList, speciesSelected, speciesOn, selectSpecies, clearSpecies, starOf,
     notice, selectedSite, toggleGeometry, toggleWetland, selectSite,
     load, clear, pushOverlay, togglePlayback, stopPlayback, selectStep, selectDeliverable, deliverableUrl,
     reportBlobUrl, reportError, openDeliverable

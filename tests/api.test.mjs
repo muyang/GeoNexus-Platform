@@ -1557,6 +1557,71 @@ test('几何接口：147 个真实点位、属性齐全、越权与越界都要�
   assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/water_change`)).status, 404);
 });
 
+test('物种索引：963 行覆盖 147 个站点，旗舰物种选中站点数与原文一致', async () => {
+  await seedFlightway(['--public']);
+  const view = (await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).data.view;
+  const species = view.geometry.find((g) => g.name === 'sites').properties.species;
+  assert.ok(species, '图层元数据要带物种索引');
+  // 963 行 = 站点 × 物种；其中 1 行是同一组合的重复（原文如此）
+  assert.equal(species.rows, 963);
+  assert.equal(species.rows_unique, 962);
+  assert.equal(species.duplicate_rows, 1);
+  assert.equal(species.index.length, 187, '原文的 (english, scientific) 组合数');
+  assert.equal(species.over_10pct_rows, 99);
+  assert.equal(species.over_50pct_rows, 24);
+  assert.equal(species.nearly_1pct_rows, 0, 'nearly_1pct 列 963 行全为 False：没有的档位不编');
+  assert.equal(species.sites_listed, 132, '147 个站里有 132 个在物种表里出现');
+  assert.match(species.caveat, /比例未公布|未公布/);
+
+  const fc = await (await fetch(`${base}/api/cases/${FLIGHTWAY_CASE}/geometry/sites`)).json();
+  const index = species.index;
+  // 覆盖：站点上的 sp 下标合计 = 去重后的组合数；两个布尔标记的行数也各自对得上
+  const sum = (key) => fc.features.reduce((n, f) => n + (f.properties[key] || []).length, 0);
+  assert.equal(sum('sp'), 962, '站点上的物种组合合计必须等于去重后的 962');
+  assert.equal(sum('sp10'), 99);
+  assert.equal(sum('sp50'), 24);
+  for (const feature of fc.features) {
+    const { sp, sp10, sp50, site_id: siteId, species_count: count } = feature.properties;
+    // 原始行数（含那条重复）与站点表的 species_count 一致；去重后的组合数少 1
+    assert.equal(sp.length + (siteId === 'rf106' ? 1 : 0), count, `${siteId} 的物种行数对不上`);
+    for (const i of [...sp10, ...sp50]) {
+      assert.ok(sp.includes(i), `${siteId} 的 ★ 站点必须是 sp 的子集`);
+      assert.ok(Number.isInteger(i) && i >= 0 && i < index.length, `${siteId} 的物种下标越界`);
+    }
+    // 原文两列互不重叠：没有任何站点同时把同一个物种种成 ★ 与 ★★
+    for (const i of sp50) assert.equal(sp10.includes(i), false, `${siteId} 的物种 ${i} 同时被标了 10% 与 50%`);
+  }
+  // 顺序无关：sp 必须是升序去重的下标数组
+  assert.ok(fc.features.every((f) => f.properties.sp.every((v, i, a) => i === 0 || a[i - 1] < v)));
+
+  // 旗舰物种（论文 Fig. 3 的视角）：站点数、国家数、10% / 50% 标注数
+  const byPair = new Map(index.map((e) => [`${e.english}\u0000${e.scientific}`, e.i]));
+  const pick = (english, scientific) => {
+    const i = byPair.get(`${english}\u0000${scientific}`);
+    assert.notEqual(i, undefined, `原文物种表里应有 ${english} / ${scientific}`);
+    const hits = fc.features.filter((f) => f.properties.sp.includes(i));
+    return {
+      sites: hits.length,
+      countries: new Set(hits.map((f) => f.properties.country)).size,
+      over10: hits.filter((f) => f.properties.sp10.includes(i)).length,
+      over50: hits.filter((f) => f.properties.sp50.includes(i)).length
+    };
+  };
+  // 数字来自补充材料：斑腿鹬 26 处 / 6 国（Fig. 3 画的就是它）
+  assert.deepEqual(pick('Spotted Greenshank', 'Tringa guttifer'),
+    { sites: 26, countries: 6, over10: 3, over50: 1 });
+  assert.deepEqual(pick('Spoon-billed Sandpiper', 'Calidris pygmaea'),
+    { sites: 13, countries: 2, over10: 1, over50: 0 });
+  assert.deepEqual(pick('Red-crowned Crane', 'Grus japonensis'),
+    { sites: 6, countries: 1, over10: 2, over50: 3 });
+  assert.deepEqual(pick('Siberian Crane', 'Leucogeranus leucogeranus'),
+    { sites: 4, countries: 1, over10: 1, over50: 1 });
+  assert.deepEqual(pick('Black-faced Spoonbill', 'Platalea minor'),
+    { sites: 12, countries: 2, over10: 0, over50: 0 });
+  // 原文没给名字的条目照录，不用学名冒充物种名
+  assert.ok(index.some((e) => e.english === ''));
+});
+
 test('可见性分层：受限组成项在场时访客拿不到案例，也拿不到几何', async () => {
   await seedFlightway([]);   // 默认模式：逐笔计数数据敏感度 restricted
   const anonCase = await api(`/api/cases/${FLIGHTWAY_CASE}`);
