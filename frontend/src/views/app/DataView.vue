@@ -11,22 +11,14 @@ import { useRouter } from 'vue-router'
 import PageShell from '@/components/PageShell.vue'
 import SourceTag from '@/components/SourceTag.vue'
 import { cardApi } from '@/api'
+import { KINDS, typeLabel as kindLabel, visibilityTag, EMPTY } from '@/lib/labels'
 
 const router = useRouter()
 const rows = ref([]); const source = ref(''); const degraded = ref(false); const error = ref('')
 const kind = ref('all'); const q = ref(''); const owner = ref('all'); const visibility = ref('all')
 const sort = ref('name'); const view = ref('grid')
 
-/** 类型词表：用 GeoCard 自己的角色词表，不另造一套分类。 */
-const KINDS = [
-  { key: 'all', label: '全部' },
-  { key: 'data', label: '数据' },
-  { key: 'model', label: '模型' },
-  { key: 'skill', label: '算子' },
-  { key: 'knowledge', label: '知识' },
-  { key: 'compute', label: '算力' }
-]
-const kindLabel = (k) => (KINDS.find((x) => x.key === k) || { label: k }).label
+/* 类型词表与状态标签统一取自 lib/labels.js，不再本页自造。 */
 
 const counts = computed(() => {
   const out = { all: rows.value.length }
@@ -102,8 +94,10 @@ onMounted(async () => {
         <option value="owner">权属方</option>
       </select>
       <div class="view-toggle">
-        <button class="icon-btn" :class="{ on: view === 'grid' }" type="button" @click="view = 'grid'">▦</button>
-        <button class="icon-btn" :class="{ on: view === 'list' }" type="button" @click="view = 'list'">☰</button>
+        <button class="icon-btn" :class="{ on: view === 'grid' }" type="button" title="按卡片排列"
+                @click="view = 'grid'">栅格</button>
+        <button class="icon-btn" :class="{ on: view === 'list' }" type="button" title="按列表排列"
+                @click="view = 'list'">列表</button>
       </div>
     </div>
 
@@ -116,7 +110,7 @@ onMounted(async () => {
     <div class="cards" :class="view === 'list' ? 'cards-list' : ''">
       <article v-for="c in visible" :key="c.id" class="card">
         <div class="card-preview">
-          <span class="dim">暂无预览</span>
+          <span class="dim">{{ EMPTY.preview }}</span>
           <em class="card-type">{{ kindLabel(c.type || 'data') }}</em>
         </div>
         <h3 class="card-title">{{ c.title || c.id }}</h3>
@@ -127,16 +121,16 @@ onMounted(async () => {
           <div><dt>权属方</dt><dd>{{ c.provider || c.owner || '未提供' }}</dd></div>
         </dl>
         <footer class="card-foot">
-          <em class="tag" :class="(c.visibility || 'public') === 'public' ? 'tag-ok' : 'tag-warn'">
-            {{ c.visibility || 'public' }}
-          </em>
+          <em class="tag" :class="visibilityTag(c.visibility).cls">{{ visibilityTag(c.visibility).text }}</em>
           <span class="dim mono">{{ c.id }}</span>
           <button class="link-btn" type="button" @click="openCard(c)">
             {{ Array.isArray(c.bbox) && c.bbox.length === 4 ? '在地图上看 ↗' : '查看详情' }}
           </button>
         </footer>
       </article>
-      <p v-if="!visible.length" class="empty">没有匹配的资源。清空搜索词或切换页签试试。</p>
+      <p v-if="!visible.length" class="empty">
+        <strong>没有匹配的资源</strong>{{ EMPTY.data }}
+      </p>
     </div>
   </PageShell>
 </template>
@@ -153,8 +147,9 @@ onMounted(async () => {
   border: 1px solid var(--e-line, rgba(255,255,255,.12)); background: rgba(255,255,255,.03); }
 .search { flex: 1; min-width: 220px; }
 .view-toggle { margin-left: auto; display: flex; gap: 4px; }
-.icon-btn { width: 30px; height: 32px; border-radius: 8px; cursor: pointer; color: inherit;
-  border: 1px solid var(--e-line, rgba(255,255,255,.12)); background: transparent; }
+.icon-btn { flex: none; height: 32px; padding: 0 11px; border-radius: 8px; cursor: pointer; color: inherit;
+  font: inherit; font-size: 12.5px; white-space: nowrap; border: 1px solid var(--e-line, rgba(255,255,255,.12));
+  background: transparent; }
 .icon-btn.on { border-color: var(--e-cyan, #57d7ff); background: rgba(87,215,255,.1); }
 
 .summary { margin: 12px 0 14px; font-size: 12.5px; opacity: .7; }
@@ -176,14 +171,11 @@ onMounted(async () => {
 .card-fields dd { margin: 0; opacity: .9; }
 .card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 10px 13px;
   border-top: 1px solid var(--e-line, rgba(255,255,255,.06)); font-size: 11.5px; }
-.link-btn { margin-left: auto; background: transparent; border: 0; color: inherit; font: inherit; font-size: 12px;
-  cursor: pointer; opacity: .85; border-bottom: 1px dashed currentColor; }
+.card-foot .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-btn { flex: none; margin-left: auto; background: transparent; border: 0; color: inherit; font: inherit;
+  font-size: 12px; white-space: nowrap; cursor: pointer; opacity: .85;
+  border-bottom: 1px dashed currentColor; }
 
-.tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px;
-  border: 1px solid var(--e-line, rgba(255,255,255,.14)); }
-.tag-ok { border-color: rgba(60,230,176,.5); }
-.tag-warn { border-color: rgba(255,196,92,.6); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dim { font-size: 11.5px; opacity: .6; }
-.empty { font-size: 13px; opacity: .7; grid-column: 1 / -1; }
 </style>

@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { cardApi, systemApi } from '@/api'
 import SourceTag from '@/components/SourceTag.vue'
+import { typeLabel } from '@/lib/labels'
 
 const auth = useAuthStore(); const ui = useUiStore()
 const tab = ref('profile')
@@ -41,7 +42,7 @@ onMounted(async () => {
         <dt>scopes</dt><dd class="mono">{{ auth.scopes.join(' · ') || '—' }}</dd>
       </dl>
       <p class="muted" style="margin-top:12px">
-        个人中心只做**聚合视图**：资料来自平台账号，任务/资产/配额分别来自 SDK Job 与 GeoCard 目录，本页不存副本。
+        个人中心只做<b>聚合视图</b>：资料来自平台账号，任务/资产/配额分别来自 SDK Job 与 GeoCard 目录，本页不存副本。
       </p>
     </div>
 
@@ -50,7 +51,7 @@ onMounted(async () => {
       <div class="earth-list" style="overflow:auto">
         <div v-for="c in assets" :key="c.id" class="earth-card">
           <h4>{{ c.title || c.id }}</h4>
-          <p><span class="pill">{{ c.type }}</span> <span class="mono">{{ c.owner || c.provider }}</span></p>
+          <p><span class="pill">{{ typeLabel(c.type) }}</span> <span class="mono">{{ c.owner || c.provider }}</span></p>
         </div>
       </div>
     </div>

@@ -13,10 +13,11 @@ import PageShell from '@/components/PageShell.vue'
 import SourceTag from '@/components/SourceTag.vue'
 import { useMap } from '@/composables/map'
 import { post } from '@/api/http'
+import { EMPTY } from '@/lib/labels'
 
 const route = useRoute()
 const mapEl = ref(null)
-const { mount, fit, ready, loading } = useMap()
+const { mount, ready, mapStatus } = useMap()
 
 const tab = ref('ask')
 const prompt = ref('')
@@ -139,7 +140,9 @@ onMounted(async () => {
               </span>
             </li>
           </ol>
-          <p v-if="!steps.length" class="dim">还没有节点 —— 先在「提问」里生成一次规划。</p>
+          <p v-if="!steps.length" class="empty">
+            <strong>还没有节点</strong>{{ EMPTY.nodes }}
+          </p>
         </template>
 
         <template v-else>
@@ -154,7 +157,9 @@ onMounted(async () => {
         <div class="map-card">
           <div class="map-card-head">
             <span>空间范围</span>
-            <span class="dim">{{ taskBbox ? '已定位到任务范围' : (ready ? '任务未声明范围' : (loading ? '加载中…' : '底图较慢（图层仍可用）')) }}</span>
+            <em class="tag" :class="taskBbox ? 'tag-ok' : mapStatus.cls">
+              {{ taskBbox ? '已定位到任务范围' : mapStatus.text }}
+            </em>
           </div>
           <div ref="mapEl" class="map-card-canvas" />
           <p v-if="!taskBbox" class="map-card-note">
@@ -230,10 +235,6 @@ onMounted(async () => {
 .kv dd { margin: 0; }
 .code { margin: 0; padding: 12px; border-radius: 10px; font-size: 11.5px; line-height: 1.6;
   background: rgba(0,0,0,.28); border: 1px solid var(--e-line, rgba(255,255,255,.08)); max-height: 520px; overflow: auto; }
-.tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px;
-  border: 1px solid var(--e-line, rgba(255,255,255,.14)); }
-.tag-ok { border-color: rgba(60,230,176,.5); }
-.tag-warn { border-color: rgba(255,196,92,.6); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .pill.bad { border-color: rgba(255,107,107,.6); }
 @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .hint-cards { grid-template-columns: 1fr; } }

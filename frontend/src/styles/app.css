@@ -1,0 +1,29 @@
+/* 应用壳（九模块）共用的视觉原子：状态标签、空状态、页签计数。
+ *
+ * 改版前 `.tag-ok` / `.tag-warn` 在数据页、案例页、工作台各写一遍，
+ * 同一个"公开 / 受限"在三处颜色不同。这里统一到 `lib/labels.js` 的档位名上：
+ *   tag-ok（好/公开/已通过）· tag-info（进行中）· tag-warn（要注意/待审）
+ *   tag-bad（受限/失败）· tag-mute（中性/未知）
+ * 只作用于应用壳，不影响站长门户（portal）与地球首页（earth）的浅色样式。
+ */
+
+html[data-shell="app"] .tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-style: normal; font-size: 11px; line-height: 1.6;
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid var(--e-line); color: var(--e-dim);
+}
+
+html[data-shell="app"] .tag-ok   { border-color: rgba(60, 230, 176, .5); color: var(--e-teal); }
+html[data-shell="app"] .tag-info { border-color: rgba(87, 215, 255, .5); color: var(--e-cyan); }
+html[data-shell="app"] .tag-warn { border-color: rgba(255, 196, 92, .6); color: var(--e-amber); }
+html[data-shell="app"] .tag-bad  { border-color: rgba(255, 122, 144, .6); color: var(--e-rose); }
+html[data-shell="app"] .tag-mute { border-color: var(--e-line); color: var(--e-dim); }
+
+/* 空状态：虚边框 + 居中；第一行说"没有什么"，第二行说"下一步做什么"。 */
+html[data-shell="app"] .empty {
+  grid-column: 1 / -1; margin: 0; padding: 26px 18px; text-align: center;
+  font-size: 13px; color: var(--e-dim);
+  border: 1px dashed var(--e-line); border-radius: 12px;
+}
+html[data-shell="app"] .empty strong { display: block; margin-bottom: 6px; font-weight: 600; color: var(--e-ink); }

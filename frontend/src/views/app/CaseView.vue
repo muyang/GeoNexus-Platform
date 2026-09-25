@@ -18,10 +18,11 @@ import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
 import { useCaseLayers } from '@/composables/caseLayers'
 import { useAuthStore } from '@/stores/auth'
+import { visibilityTag, scopeTag, runTag, dataOriginTag, EMPTY } from '@/lib/labels'
 
 const route = useRoute(); const router = useRouter(); const auth = useAuthStore()
 const mapEl = ref(null)
-const { mount, fit, ready, loading } = useMap()
+const { mount, fit, ready, mapStatus } = useMap()
 const layers = useCaseLayers()
 
 const rows = ref([]); const source = ref(''); const degraded = ref(false); const error = ref('')
@@ -93,7 +94,9 @@ onMounted(async () => {
     <div class="cases">
       <!-- 左：案例列表 -->
       <aside class="case-list">
-        <p v-if="!rows.length" class="empty">案例库为空，或后端不可达。</p>
+        <p v-if="!rows.length" class="empty">
+          <strong>案例库为空</strong>后端不可达时也会是这样 —— 检查 API 是否启动。
+        </p>
         <button v-for="c in rows" :key="c.id" class="case-row" type="button"
                 :class="{ on: detail?.id === c.id }" @click="pick(c)">
           <span class="case-row-head">
@@ -114,7 +117,9 @@ onMounted(async () => {
           <span class="tag" :class="isLive(detail) ? 'tag-live' : 'tag-arch'">
             {{ isLive(detail) ? '实测运行' : '存档案例' }}
           </span>
-          <span v-if="layers.notice.value" class="tag tag-warn">合成/示意数据</span>
+          <span v-if="layers.notice.value" class="tag" :class="dataOriginTag(true).cls">
+            {{ dataOriginTag(true).text }}
+          </span>
           <div class="dossier-actions">
             <button class="btn-ghost" type="button" :disabled="runState.busy || !auth.loggedIn"
                     @click="runRecipe">{{ runState.busy ? '执行中…' : '按方案运行' }}</button>
@@ -141,7 +146,7 @@ onMounted(async () => {
                 <tr v-for="c in dataComponents" :key="c.id">
                   <td class="mono">{{ c.id }}</td>
                   <td>{{ c.role }}</td>
-                  <td><em class="tag" :class="c.visibility === 'public' ? 'tag-ok' : 'tag-warn'">{{ c.visibility || '—' }}</em></td>
+                  <td><em class="tag" :class="visibilityTag(c.visibility).cls">{{ visibilityTag(c.visibility).text }}</em></td>
                   <td class="mono">{{ c.bbox ? c.bbox.map((n) => n.toFixed(1)).join(', ') : '—' }}</td>
                 </tr>
               </tbody>
@@ -154,8 +159,8 @@ onMounted(async () => {
                 <span class="step-num">{{ s.id }}</span>
                 <span class="step-body">
                   <strong>{{ s.kind === 'skill' ? 'EXECUTE' : s.kind.toUpperCase() }} · {{ s.uses }}</strong>
-                  <em v-if="stepRuns[s.id]" class="tag" :class="stepRuns[s.id].status === 'succeeded' ? 'tag-ok' : 'tag-warn'">
-                    {{ stepRuns[s.id].status }}
+                  <em v-if="stepRuns[s.id]" class="tag" :class="runTag(stepRuns[s.id].status).cls">
+                    {{ runTag(stepRuns[s.id].status).text }}
                   </em>
                   <span class="step-desc">{{ s.description || '（方案未写说明）' }}</span>
                 </span>
@@ -172,7 +177,7 @@ onMounted(async () => {
                    :href="layers.deliverableUrl(d.deliverableId)" target="_blank" rel="noopener">查看报告 ↗</a>
               </li>
             </ul>
-            <p v-else class="dim">还没有交付物 —— 运行一次方案后产生。</p>
+            <p v-else class="dim">{{ EMPTY.deliverables }}</p>
 
             <h3>参数契约</h3>
             <table v-if="recipe && recipe.contract && recipe.contract.length" class="kv-table">
@@ -185,7 +190,7 @@ onMounted(async () => {
                     {{ p.enum && p.enum.length ? p.enum.join(' / ')
                       : (p.minimum !== null || p.maximum !== null ? `${p.minimum ?? '−∞'} … ${p.maximum ?? '∞'}` : '—') }}
                   </td>
-                  <td><em class="tag" :class="p.scope === 'fixed' ? 'tag-warn' : 'tag-ok'">{{ p.scope === 'fixed' ? '作者钉死' : '可改' }}</em></td>
+                  <td><em class="tag" :class="scopeTag(p.scope).cls">{{ scopeTag(p.scope).text }}</em></td>
                 </tr>
               </tbody>
             </table>
@@ -197,7 +202,8 @@ onMounted(async () => {
             <div class="map-card">
               <div class="map-card-head">
                 <span>案例范围与图层</span>
-                <span class="dim">{{ ready ? 'globe ready' : (loading ? '加载中…' : (layers.spatial.value ? '未就绪' : '非空间案例')) }}</span>
+                <em v-if="layers.spatial.value" class="tag" :class="mapStatus.cls">{{ mapStatus.text }}</em>
+                <em v-else class="tag tag-mute">非空间案例</em>
               </div>
               <div ref="mapEl" class="map-card-canvas" />
               <p v-if="!layers.spatial.value" class="map-card-note">
@@ -208,7 +214,9 @@ onMounted(async () => {
           </div>
         </div>
       </section>
-      <section v-else class="dossier empty-pane">左侧选择一个案例</section>
+      <section v-else class="dossier empty-pane">
+        <p class="empty"><strong>还没有选中案例</strong>左侧列表里点一个案例，这里显示它的档案。</p>
+      </section>
     </div>
   </PageShell>
 </template>
@@ -260,17 +268,12 @@ onMounted(async () => {
 .map-card-canvas { height: 300px; }
 .map-card-note { margin: 0; padding: 8px 11px; font-size: 12px; opacity: .7; }
 
-.tag { font-style: normal; font-size: 11px; padding: 1px 7px; border-radius: 999px;
-  border: 1px solid var(--e-line, rgba(255,255,255,.14)); opacity: .9; }
 .tag-live { border-color: rgba(60,230,176,.6); }
 .tag-arch { opacity: .7; }
-.tag-ok { border-color: rgba(60,230,176,.5); }
-.tag-warn { border-color: rgba(255,196,92,.6); }
 .btn-ghost { height: 30px; padding: 0 12px; border-radius: 8px; cursor: pointer; color: inherit;
   border: 1px solid var(--e-line, rgba(255,255,255,.14)); background: transparent; font: inherit; font-size: 12.5px; }
 .btn-ghost:disabled { opacity: .45; cursor: not-allowed; }
 .dim { font-size: 12px; opacity: .65; }
-.empty { font-size: 13px; opacity: .7; }
 .pill.bad { border-color: rgba(255,107,107,.6); }
 
 @media (max-width: 1100px) {

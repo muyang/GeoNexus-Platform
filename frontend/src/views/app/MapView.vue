@@ -13,7 +13,7 @@ const source = ref(''); const degraded = ref(false); const error = ref('')
 const layersOpen = ref(true)
 const {
   mount, engine, projection, setEngine, setProjection, setBasemap, basemapId,
-  ready, loading, layers, fitAll, syncLayers
+  layers, fitAll, syncLayers, mapStatus
 } = useMap()
 
 onMounted(async () => {
@@ -44,7 +44,7 @@ onMounted(async () => {
 
     <div class="float float-right">
       <div class="float-head"><span class="float-title">视图</span>
-        <span class="dim">{{ ready ? 'globe ready' : (loading ? '加载中…' : '未就绪') }}</span>
+        <em class="tag" :class="mapStatus.cls">{{ mapStatus.text }}</em>
       </div>
       <div class="float-body">
         <button class="btn-ghost" type="button" @click="setEngine(engine === 'cesium' ? 'maplibre' : 'cesium')">

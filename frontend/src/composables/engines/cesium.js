@@ -13,6 +13,10 @@ export function createCesiumEngine(state) {
   let CesiumMod = null
   const entityByLayer = new Map()
   const TIMEOUT_MS = 12000
+  //: 影像层已就绪后，再画过这么多帧就认为"地球可用"。
+  //: 不用 tilesLoaded 当唯一判据：卫星影像会一直排后台瓦片，tilesLoaded 可以长时间为 false，
+  //: 于是标签永远停在"加载中…"，而屏幕上地球早就画出来了（截图复核时发现的）。
+  const READY_FRAMES = 5
 
   const colorFor = (kind) => ({
     data: '#57d7ff', skill: '#3ce6b0', model: '#b48bff', knowledge: '#ffc65c', agent: '#ff7a90',
@@ -83,9 +87,18 @@ export function createCesiumEngine(state) {
         ready.value = true; loading.value = false; basemapFailed.value = false; slowBasemap.value = false
         if (import.meta.env.DEV) console.debug(`[cesium] 地球就绪（${why}）`)
       }
-      // 影像层就绪 + 首次渲染完成即视为可用
+      // 判据一：瓦片队列清空（最快、最准，但可能一直排后台瓦片）
       viewer.scene.globe.tileLoadProgressEvent.addEventListener((n) => { if (n === 0) markReady('tiles') })
-      viewer.scene.postRender.addEventListener(() => { if (!ready.value && viewer.scene.globe.tilesLoaded) markReady('postRender') })
+      // 判据二：已经连续画出若干帧，且影像图源本身 ready ⇒ 地球可见可用。
+      let frames = 0
+      viewer.scene.postRender.addEventListener(() => {
+        if (ready.value) return
+        frames += 1
+        if (viewer.scene.globe.tilesLoaded) return markReady('postRender')
+        const layer = viewer.imageryLayers.get(0)
+        const provider = layer && layer.imageryProvider
+        if (frames >= READY_FRAMES && (!provider || provider.ready !== false)) markReady(`frames=${frames}`)
+      })
       if (typeof window !== 'undefined') window.__gnxGlobe = viewer
       setTimeout(() => { if (!ready.value) { loading.value = false; slowBasemap.value = true; error.value = '地球瓦片加载较慢…' } }, TIMEOUT_MS)
       redraw()          // 补画可能在 viewer 就绪前就到达的图层

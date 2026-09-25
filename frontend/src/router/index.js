@@ -25,8 +25,8 @@ export const routes = [
     meta: { shell: 'app', access: 'public', titleKey: 'nav.cases' } },
   { path: '/workbench', name: 'workbench', component: () => import('@/views/app/WorkbenchView.vue'),
     meta: { shell: 'app', access: 'auth', titleKey: 'nav.workbench' } },
-  { path: '/account', name: 'account', component: () => import('@/views/earth/PersonalCenter.vue'),
-    meta: { shell: 'earth', access: 'auth', titleKey: 'nav.account' } },
+  { path: '/account', name: 'account', component: () => import('@/views/app/AccountView.vue'),
+    meta: { shell: 'app', access: 'auth', titleKey: 'nav.account' } },
   { path: '/admin', name: 'admin', component: () => import('@/views/admin/AdminConsole.vue'),
     meta: { shell: 'portal', access: 'perm', perm: 'system:user:list', titleKey: 'nav.admin' } },
 

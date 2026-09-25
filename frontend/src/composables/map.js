@@ -1,4 +1,4 @@
-import { ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { createMaplibreEngine } from './engines/maplibre'
 import { createCesiumEngine } from './engines/cesium'
 import { DEFAULT_BASEMAP } from './basemaps'
@@ -50,6 +50,16 @@ async function loadSettings(force = false) {
   } catch { /* 后端不可达：用默认（Cesium 3D 地球 + 卫星影像） */ }
   settingsLoaded.value = true
 }
+
+/** 地图状态的一句话说法：三个用到地图的页面（地图 / 案例 / 工作台）共用一套，
+ *  免得同一个状态在三处写成三种话（改版前分别写"globe ready""未就绪""加载中…"）。 */
+const mapStatus = computed(() => {
+  if (ready.value) return { text: engine.value === 'cesium' ? '地球已就绪' : '地图已就绪', cls: 'tag-ok' }
+  if (loading.value) return { text: '加载中…', cls: 'tag-mute' }
+  if (basemapFailed.value) return { text: '底图不可用（图层仍可用）', cls: 'tag-bad' }
+  if (slowBasemap.value) return { text: '底图较慢（图层仍可用）', cls: 'tag-warn' }
+  return { text: '未就绪', cls: 'tag-mute' }
+})
 
 export function useMap() {
   async function mount(el, opts = {}) {
@@ -113,6 +123,7 @@ export function useMap() {
   return {
     // 状态
     engine, projection, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers, showGeoCards, caseOverlay,
+    mapStatus,
     // 动作
     mount, destroy, setEngine, setProjection, loadSettings,
     syncLayers, syncCaseOverlay, clearCaseOverlay, replayCaseOverlay,
