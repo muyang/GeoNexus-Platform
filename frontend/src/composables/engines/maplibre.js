@@ -1,12 +1,14 @@
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { getBasemap } from '../basemaps'
+import { PC1_BANDS, WATER_CLASS_STYLE } from '../caseStyle'
 
 /** MapLibre 后端（矢量/栅格底图 + 2D 地图）。
  *  状态由 facade 注入，本模块不持有全局单例 —— 这样引擎可以在运行时切换。 */
 export function createMaplibreEngine(state, hooks = {}) {
   const { map, ready, loading, basemapFailed, slowBasemap, error, tilestats, basemapId, layers } = state
   let loadTimer = null
+  let featureClick = null
   let retried = false
   const TIMEOUT_MS = 8000
 
@@ -119,7 +121,42 @@ export function createMaplibreEngine(state, hooks = {}) {
   }
 
   /** 案例叠加层：AOI（L1）+ 组成项范围 + 血缘弧线（默认关）。 */
-  function syncCaseOverlay(overlay, { provenance = false } = {}) {
+  /** 把 GeoJSON 画上地图：面按 class 配色，点按 PC1 分级（MapLibre 直接用 geojson source）。 */
+  function drawCaseGeometry(overlay) {
+    const mp = map.value
+    if (!mp) return
+    const geometry = (overlay && overlay.geometry) || {}
+    const visible = (overlay && overlay.visible) || {}
+    const ids = ['water_change', 'water_baseline', 'sites']
+    for (const name of ids) {
+      if (mp.getLayer('lyr-case-' + name)) mp.removeLayer('lyr-case-' + name)
+      if (mp.getSource('src-case-' + name)) mp.removeSource('src-case-' + name)
+      if (!geometry[name] || visible[name] === false) continue
+      mp.addSource('src-case-' + name, { type: 'geojson', data: geometry[name] })
+      if (name === 'sites') {
+        mp.addLayer({ id: 'lyr-case-sites', type: 'circle', source: 'src-case-sites', paint: {
+          'circle-radius': ['match', ['get', 'pc1_band'], 'high', PC1_BANDS.high.radius,
+            'medium', PC1_BANDS.medium.radius, PC1_BANDS.low.radius],
+          'circle-color': ['match', ['get', 'pc1_band'], 'high', PC1_BANDS.high.color,
+            'medium', PC1_BANDS.medium.color, PC1_BANDS.low.color],
+          'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.2,
+          'circle-opacity': 0.95
+        } })
+      } else {
+        mp.addLayer({ id: 'lyr-case-' + name, type: 'fill', source: 'src-case-' + name, paint: {
+          'fill-color': ['match', ['get', 'class'], 'loss', WATER_CLASS_STYLE.loss.color,
+            'gain', WATER_CLASS_STYLE.gain.color, WATER_CLASS_STYLE.stable.color],
+          'fill-opacity': name === 'water_baseline' ? 0 : WATER_CLASS_STYLE.loss.opacity,
+          'fill-outline-color': WATER_CLASS_STYLE.stable.color
+        } })
+      }
+    }
+    document.documentElement.dataset.caseGeometry = String(
+      ids.filter((name) => mp.getLayer('lyr-case-' + name)).length)
+  }
+  function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
+    if (onFeatureClick) featureClick = onFeatureClick
+    bindCaseClicks()
     const mp = map.value
     if (!mp) return
     const draw = () => {
@@ -155,11 +192,25 @@ export function createMaplibreEngine(state, hooks = {}) {
           paint: { 'line-color': '#8fe6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] } })
       }
       document.documentElement.dataset.caseOverlay = String(drawn)
+      drawCaseGeometry(overlay)
     }
     if (mp.isStyleLoaded()) draw(); else mp.once('idle', draw)
   }
 
   function clearCaseOverlay() { syncCaseOverlay(null) }
+
+  /** 点击地点 → 面板：只把带 pc1 的要素交上去。挂一次就够了。 */
+  function bindCaseClicks() {
+    const mp = map.value
+    if (!mp || mp.__gnxCaseClick) return
+    mp.__gnxCaseClick = true
+    mp.on('click', (event) => {
+      const layers = ['lyr-case-sites', 'lyr-case-water_change'].filter((id) => mp.getLayer(id))
+      if (!layers.length) return
+      const hits = mp.queryRenderedFeatures(event.point, { layers })
+      if (hits.length && featureClick) featureClick(hits[0].properties)
+    })
+  }
 
   function setVisible(id, visible) {
     const l = layers.value.find((x) => x.id === id); if (!l) return

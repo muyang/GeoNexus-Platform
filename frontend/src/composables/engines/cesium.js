@@ -1,4 +1,5 @@
 import { getBasemap } from '../basemaps'
+import { PC1_BANDS, WATER_CLASS_STYLE } from '../caseStyle'
 
 /** Cesium 后端：3D 地球（默认）。
  *
@@ -36,6 +37,15 @@ export function createCesiumEngine(state) {
   async function mount(container, { basemap = 'satellite', projection = '3d', homeView } = {}) {
     if (!container) return false
     if (viewer) return true
+    // 拾取一次挂一次：点的属性交给面板（PC1、达标种群数…）
+    viewerSelectionHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
+    viewerSelectionHandler.setInputAction((click) => {
+      const picked = viewer.scene.pick(click.position)
+      const entity = picked && picked.id
+      if (entity && entity.properties && entity.properties.getValue && featureClick) {
+        featureClick(entity.properties.getValue(Cesium.JulianDate.now()))
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
     basemapId.value = basemap
     loading.value = true
     try {
@@ -98,6 +108,9 @@ export function createCesiumEngine(state) {
   }
 
   const caseEntities = new Map()
+  const caseDataSources = new Map()
+  let featureClick = null
+  let viewerSelectionHandler = null
 
   function syncLayers(cards) {
     layers.value = (cards || [])
@@ -137,7 +150,64 @@ export function createCesiumEngine(state) {
 
   /** 案例叠加层：AOI 面（L1）、组成项（数据范围）、血缘弧线（默认关）。
    *  与 GeoCard 图层分开管理：选中哪个案例只影响这一层，不重画整个目录。 */
-  function syncCaseOverlay(overlay, { provenance = false } = {}) {
+  /** 把 GeoJSON 画上地球：面按 class 配色，点按 PC1 分级定大小与颜色。
+   *  几何是异步加载的（GeoJsonDataSource.load 返回 Promise），所以与 bbox 那条
+   *  同步路径分开；画不出来也不该影响底图。 */
+  async function drawCaseGeometry(overlay) {
+    const Cesium = CesiumMod
+    if (!viewer || !Cesium) return
+    for (const key of [...caseDataSources.keys()]) {
+      const source = caseDataSources.get(key)
+      try { viewer.dataSources.remove(source, true) } catch { /* 已移除 */ }
+      caseDataSources.delete(key)
+    }
+    const geometry = (overlay && overlay.geometry) || {}
+    const visible = (overlay && overlay.visible) || {}
+    const add = async (name, options) => {
+      if (!geometry[name] || visible[name] === false) return
+      const source = await Cesium.GeoJsonDataSource.load(geometry[name], options)
+      source.name = name
+      await viewer.dataSources.add(source)
+      caseDataSources.set(name, source)
+    }
+    await add('water_baseline', {
+      stroke: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.stable.color).withAlpha(0.8),
+      fill: Cesium.Color.TRANSPARENT, strokeWidth: 2
+    })
+    await add('water_change', {
+      stroke: Cesium.Color.WHITE.withAlpha(0.35),
+      fill: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.loss.color).withAlpha(WATER_CLASS_STYLE.loss.opacity),
+      strokeWidth: 1
+    })
+    await add('sites', {
+      markerSymbol: 'o', markerColor: Cesium.Color.fromCssColorString(PC1_BANDS.high.color),
+      markerSize: 24, stroke: Cesium.Color.WHITE.withAlpha(0.9), strokeWidth: 1
+    })
+    for (const source of caseDataSources.values()) {
+      for (const entity of source.entities.values) {
+        const props = entity.properties && entity.properties.getValue
+          ? entity.properties.getValue(Cesium.JulianDate.now()) : {}
+        if (props && props.class && WATER_CLASS_STYLE[props.class]) {
+          const style = WATER_CLASS_STYLE[props.class]
+          if (entity.polygon) {
+            entity.polygon.material = Cesium.Color.fromCssColorString(style.color).withAlpha(style.opacity)
+          }
+          entity.description = style.label + '（' + (props.pixels || 0) + ' 像元）'
+        }
+        if (props && props.pc1 !== undefined) {
+          const band = PC1_BANDS[props.pc1_band] || PC1_BANDS.low
+          if (entity.billboard) {
+            entity.billboard.color = Cesium.Color.fromCssColorString(band.color)
+            entity.billboard.scale = band.radius / 8
+          }
+          entity.description = (props.name || props.site_id) + '　PC1 ' + props.pc1
+            + '　达标种群 ' + props.species_meeting_1pct
+        }
+      }
+    }
+    document.documentElement.dataset.caseGeometry = String(caseDataSources.size)
+  }
+  function syncCaseOverlay(overlay, { provenance = false, onFeatureClick = null } = {}) {
     const Cesium = CesiumMod
     if (!viewer || !Cesium) return
     for (const key of [...caseEntities.keys()]) {
@@ -191,6 +261,8 @@ export function createCesiumEngine(state) {
       }
     }
     document.documentElement.dataset.caseOverlay = String(caseEntities.size)
+    if (onFeatureClick) featureClick = onFeatureClick
+    drawCaseGeometry(overlay).catch(() => { /* 几何画不出来不该影响底图 */ })
   }
 
   function clearCaseOverlay() { syncCaseOverlay(null) }
@@ -224,6 +296,8 @@ export function createCesiumEngine(state) {
   function destroy() {
     entityByLayer.clear()
     caseEntities.clear()
+    caseDataSources.clear()
+    if (viewerSelectionHandler) { try { viewerSelectionHandler.destroy() } catch { /* 已销毁 */ } viewerSelectionHandler = null }
     if (viewer) { try { viewer.destroy() } catch { /* 忽略 */ } }
     viewer = null
     ready.value = false; loading.value = false; slowBasemap.value = false

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useUiStore } from '@/stores/ui'
+import { GEOMETRY_LAYERS, PC1_BANDS, WATER_CLASS_STYLE } from '@/composables/caseStyle'
 
 /** 案例图层面板：四级 LOD + 双时间轴 + 血缘弧线开关 + 报告联动。
  *
@@ -75,6 +76,70 @@ const spatialComponents = computed(() => l.components.value.filter((c) => Array.
               {{ roleLabel[c.role] || c.role }} · {{ c.id }}
               <template v-if="!c.bbox">（无范围，不画）</template>
               <template v-else-if="c.visibility !== 'public'">（{{ c.visibility }}）</template>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- 合成/示意标注：从要素属性里读，不靠人记得加 -->
+        <el-alert v-if="l.notice.value" type="warning" :closable="false" style="margin-bottom:8px"
+                  :title="l.notice.value.text" />
+
+        <!-- 真实几何：面按 class 配色、点按 PC1 分级 -->
+        <div class="layer-group">
+          <h5>案例几何（矢量，来自平台受控接口）</h5>
+          <p v-if="l.geometryError.value" class="pill bad">{{ l.geometryError.value }}</p>
+          <div v-for="g in GEOMETRY_LAYERS" :key="g.name" class="layer-row">
+            <div>
+              <div class="name">{{ g.label }}</div>
+              <div class="meta mono">
+                <template v-if="g.name === 'sites'">{{ l.siteFeatures.value.length }} 个地点</template>
+                <template v-else-if="g.name === 'water_change'">
+                  <span v-for="(count, cls) in l.changeCounts.value" :key="cls"
+                        :style="{ color: (WATER_CLASS_STYLE[cls] || {}).color, marginRight: '8px' }">
+                    {{ (WATER_CLASS_STYLE[cls] || {}).label || cls }} {{ count }} 片
+                  </span>
+                </template>
+                <template v-else>基线水面范围</template>
+              </div>
+            </div>
+            <div class="acts">
+              <button class="icon-btn" type="button"
+                      @click="l.toggleGeometry(g.name)">{{ l.geometryOn.value[g.name] ? '◉' : '○' }}</button>
+            </div>
+          </div>
+
+          <!-- PC1 图例：三档与地图上的点一一对应 -->
+          <div class="meta" style="margin-top:6px">PC1 图例（点的大小与颜色）</div>
+          <div v-for="(band, key) in PC1_BANDS" :key="key" class="meta"
+               style="display:flex; align-items:center; gap:6px">
+            <i :style="{ width: band.radius + 'px', height: band.radius + 'px', background: band.color,
+                         borderRadius: '50%', display: 'inline-block' }"></i>
+            <span>{{ band.label }}</span>
+          </div>
+        </div>
+
+        <!-- 点选地点：与地图点击、列表点击同一份状态 -->
+        <div class="layer-group">
+          <h5>地点详情</h5>
+          <p v-if="!l.selectedSite.value" class="muted">在地图上点一个点，或点下面的行</p>
+          <template v-else>
+            <dl class="kv">
+              <dt>地点</dt><dd>{{ l.selectedSite.value.name || l.selectedSite.value.site_id }}</dd>
+              <dt>PC1</dt><dd>{{ l.selectedSite.value.pc1 }}</dd>
+              <dt>分级</dt>
+              <dd>{{ (PC1_BANDS[l.selectedSite.value.pc1_band] || {}).label || l.selectedSite.value.pc1_band }}</dd>
+              <dt>达标种群</dt><dd>{{ l.selectedSite.value.species_meeting_1pct }}</dd>
+              <dt>其中受威胁</dt><dd>{{ l.selectedSite.value.threatened_species_meeting_1pct }}</dd>
+              <dt>保护状况</dt><dd>{{ l.selectedSite.value.protected_status || '—' }}</dd>
+            </dl>
+          </template>
+          <div v-for="f in l.siteFeatures.value" :key="f.properties.site_id" class="layer-row"
+               :style="l.selectedSite.value && l.selectedSite.value.site_id === f.properties.site_id
+                 ? 'background:rgba(255,176,32,.12);border-radius:6px' : ''">
+            <div style="cursor:pointer" @click="l.selectSite(f.properties)">
+              <div class="name">{{ f.properties.name }}</div>
+              <div class="meta mono">PC1 {{ f.properties.pc1 }} · 达标种群 {{ f.properties.species_meeting_1pct }}</div>
             </div>
           </div>
         </div>

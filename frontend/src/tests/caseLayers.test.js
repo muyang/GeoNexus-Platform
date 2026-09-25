@@ -27,6 +27,11 @@ const view = {
     dataTime: { start: '2019-01-01', end: '2019-12-31' },
     executionTime: { start: '2026-09-24T10:00:00Z', end: '2026-09-24T10:00:02Z' }
   },
+  geometry: [
+    { name: 'water_change', kind: 'change-polygons', url: '/api/cases/case-1/geometry/water_change', properties: { classes: ['loss', 'gain'] } },
+    { name: 'water_baseline', kind: 'water-extent', url: '/api/cases/case-1/geometry/water_baseline', properties: {} },
+    { name: 'sites', kind: 'sample-points', url: '/api/cases/case-1/geometry/sites', properties: { legend: { bands: [] } } }
+  ],
   layers: [
     { level: 'L1', kind: 'aoi' },
     { level: 'L2', kind: 'step-footprint', steps: [
@@ -42,13 +47,35 @@ const view = {
   ]
 }
 
+const geometryFixtures = {
+  water_change: { type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { class: 'loss', pixels: 3845, synthetic: true }, geometry: { type: 'MultiPolygon', coordinates: [] } },
+    { type: 'Feature', properties: { class: 'gain', pixels: 477, synthetic: true }, geometry: { type: 'MultiPolygon', coordinates: [] } }
+  ] },
+  water_baseline: { type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { class: 'water', synthetic: true }, geometry: { type: 'MultiPolygon', coordinates: [] } }
+  ] },
+  sites: { type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { site_id: 'site-02', name: '示意地点 02', pc1: 0.3553, pc1_band: 'medium', species_meeting_1pct: 18, synthetic: true }, geometry: { type: 'Point', coordinates: [120.5, 33] } },
+    { type: 'Feature', properties: { site_id: 'site-01', name: '示意地点 01', pc1: 0.5213, pc1_band: 'high', species_meeting_1pct: 20, synthetic: true }, geometry: { type: 'Point', coordinates: [120.9, 33.2] } }
+  ] }
+}
+
 beforeEach(() => {
   vi.resetModules()
   vi.restoreAllMocks()
   drawn.overlays.length = 0; drawn.cleared = 0; drawn.fitted.length = 0
-  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
-    ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ view }))
-  })))
+  vi.stubGlobal('fetch', vi.fn((url) => {
+    const body = String(url).includes('/geometry/')
+      ? geometryFixtures[String(url).split('/').pop()]
+      : { view }
+    return Promise.resolve({
+      ok: Boolean(body),
+      status: body ? 200 : 404,
+      text: () => Promise.resolve(JSON.stringify(body || {})),
+      json: () => Promise.resolve(body || {})   // 几何走 response.json()
+    })
+  }))
 })
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -58,9 +85,12 @@ describe('案例图层：四级 LOD', () => {
     const l = useCaseLayers()
     await l.load('case-1')
     expect(l.spatial.value).toBe(true)
-    expect(drawn.overlays.length).toBe(1, '空间案例加载后要画一次叠加层')
-    expect(drawn.overlays[0].overlay.aoi).toEqual(view.bbox)
-    expect(drawn.overlays[0].opts.provenance).toBe(false, '血缘弧线默认关')
+    expect(drawn.overlays.length).toBeGreaterThan(0)
+    const last = drawn.overlays.at(-1)
+    expect(last.overlay.aoi).toEqual(view.bbox)
+    expect(last.opts.provenance).toBe(false, '血缘弧线默认关')
+    // 几何到位后再画一次：这一份才带真实的点与面
+    expect(Object.keys(last.overlay.geometry).sort()).toEqual(['sites', 'water_baseline', 'water_change'])
     expect(drawn.fitted[0]).toEqual(view.bbox)
     expect(l.steps.value.map((s) => s.stepId)).toEqual(['s1', 's2', 's3'])
     expect(l.groups.value.map((g) => g.role)).toEqual(['data', 'knowledge'])
@@ -119,7 +149,7 @@ describe('案例图层：四级 LOD', () => {
   })
 
   it('非空间案例不上地球，但图层数据照常可用', async () => {
-    const nonSpatial = { ...view, spatial: false, bbox: null }
+    const nonSpatial = { ...view, spatial: false, bbox: null, geometry: [] }
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
       ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ view: nonSpatial }))
     })))
@@ -130,6 +160,39 @@ describe('案例图层：四级 LOD', () => {
     expect(l.steps.value.length).toBe(3)
     const { useMap } = await import('@/composables/map')
     expect(useMap().caseOverlay.value).toBeNull()
+  })
+
+  it('几何按受控地址逐份取回：面按 class、点按 PC1 排序', async () => {
+    const { useCaseLayers } = await import('@/composables/caseLayers')
+    const l = useCaseLayers()
+    await l.load('case-1')
+    expect(Object.keys(l.geometry.value).sort()).toEqual(['sites', 'water_baseline', 'water_change'])
+    expect(l.changeCounts.value).toEqual({ loss: 1, gain: 1 })
+    // 点击面板与表格用同一顺序：PC1 降序
+    expect(l.siteFeatures.value.map((f) => f.properties.site_id)).toEqual(['site-01', 'site-02'])
+    expect(l.notice.value.synthetic).toBe(true, '合成标注来自要素属性，不靠人记得加')
+    expect(l.notice.value.text).toContain('不得作为科研')
+  })
+
+  it('点选地点与图层开关都会重画', async () => {
+    const { useCaseLayers } = await import('@/composables/caseLayers')
+    const l = useCaseLayers()
+    await l.load('case-1')
+    expect(l.geometryOn.value.water_change).toBe(true)
+    expect(l.geometryOn.value.water_baseline).toBe(false, '基线水面默认关：先讲变化')
+
+    // 引擎把点击回调交回来：带 pc1 的要素才被当成"地点"
+    const before = drawn.overlays.length
+    drawn.overlays.at(-1).opts.onFeatureClick({ site_id: 'site-01', pc1: 0.5213, species_meeting_1pct: 20 })
+    expect(l.selectedSite.value.site_id).toBe('site-01')
+    drawn.overlays.at(-1).opts.onFeatureClick({ class: 'loss' })
+    expect(l.selectedSite.value.site_id).toBe('site-01', '点到面不应该清掉已选地点')
+
+    l.toggleGeometry('sites', false)
+    expect(drawn.overlays.length).toBeGreaterThan(before)
+    expect(drawn.overlays.at(-1).overlay.visible.sites).toBe(false)
+    l.toggleGeometry('water_baseline')
+    expect(l.geometryOn.value.water_baseline).toBe(true, '不传值时就是取反')
   })
 
   it('不可见的案例（后端 404）不抛异常，只显示为"不存在"', async () => {

@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
+import { GEOMETRY_LAYERS, sortedSiteFeatures, syntheticNotice, waterClassCounts } from '@/composables/caseStyle'
 
 /** 案例图层：四级 LOD + 双时间轴 + 血缘弧线。
  *
@@ -24,6 +25,12 @@ export function useCaseLayers() {
   const view = ref(null)
   const loading = ref(false)
   const error = ref('')
+  /** 几何：name → FeatureCollection（从平台受控接口取，前端不自己拼路径） */
+  const geometry = ref({})
+  const geometryError = ref('')
+  const geometryOn = ref(Object.fromEntries(GEOMETRY_LAYERS.map((l) => [l.name, l.defaultOn])))
+  /** 被点选的地点（点地图上的点或点列表里的行都会设它） */
+  const selectedSite = ref(null)
 
   // 四级 LOD：默认只开 L1+L2（先看清范围与步骤），L3/L4 随选择展开。
   const levelsOn = ref({ L1: true, L2: true, L3: true, L4: true })
@@ -60,13 +67,63 @@ export function useCaseLayers() {
     }
   })
 
+  /** 案例几何的派生视图（面板与引擎共用这一份，不各自过滤） */
+  const changeLayer = computed(() => geometry.value.water_change || null)
+  const baselineLayer = computed(() => geometry.value.water_baseline || null)
+  const sitesLayer = computed(() => geometry.value.sites || null)
+  const siteFeatures = computed(() => sortedSiteFeatures(sitesLayer.value))
+  const notice = computed(() => syntheticNotice(geometry.value))
+  const changeCounts = computed(() => waterClassCounts(changeLayer.value))
+
   function pushOverlay() {
     if (!spatial.value) { clearCaseOverlay(); return }
     syncCaseOverlay(
-      { aoi: view.value.bbox, components: components.value },
-      { provenance: provenanceOn.value && levelsOn.value.L1 }
+      {
+        aoi: view.value.bbox,
+        components: components.value,
+        geometry: geometry.value,
+        visible: geometryOn.value
+      },
+      {
+        provenance: provenanceOn.value && levelsOn.value.L1,
+        onFeatureClick: (properties) => {
+          if (properties && properties.pc1 !== undefined) selectedSite.value = properties
+        }
+      }
     )
   }
+
+  /** 逐份拉取几何：某一层失败只影响那一层，不该让整个案例打不开。 */
+  async function loadGeometry(list) {
+    geometry.value = {}
+    geometryError.value = ''
+    const wanted = (list || []).filter((g) => g && g.url)
+    const results = await Promise.all(wanted.map(async (item) => {
+      try {
+        const response = await fetch(item.url, { headers: { accept: 'application/geo+json, application/json' } })
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+        return { name: item.name, data: await response.json() }
+      } catch (e) {
+        return { name: item.name, error: e.message }
+      }
+    }))
+    const next = {}
+    const failed = []
+    for (const item of results) {
+      if (item.data) next[item.name] = item.data
+      else failed.push(item.name + ': ' + item.error)
+    }
+    geometry.value = next
+    if (failed.length) geometryError.value = '部分几何加载失败（' + failed.join('；') + '）'
+    pushOverlay()
+  }
+
+  function toggleGeometry(name, on) {
+    const next = on === undefined ? !geometryOn.value[name] : Boolean(on)
+    geometryOn.value = { ...geometryOn.value, [name]: next }
+  }
+
+  function selectSite(properties) { selectedSite.value = properties || null }
 
   async function load(caseId) {
     stopPlayback()
@@ -79,6 +136,8 @@ export function useCaseLayers() {
       view.value = (await caseApi.layers(caseId)).view
       pushOverlay()
       if (spatial.value) fit(view.value.bbox)
+      // 图层描述先到就能出面板；几何到了再上图
+      await loadGeometry(view.value.geometry)
       return view.value
     } catch (e) {
       // 不可见的案例对外就是"不存在"：这里同样不区分"没有"和"无权"，只如实显示
@@ -87,7 +146,10 @@ export function useCaseLayers() {
     } finally { loading.value = false }
   }
 
-  function clear() { stopPlayback(); view.value = null; clearCaseOverlay() }
+  function clear() {
+    stopPlayback(); view.value = null; geometry.value = {}; selectedSite.value = null
+    clearCaseOverlay()
+  }
 
   /** L2 播放：按执行顺序走一遍步骤足迹。 */
   function stopPlayback() {
@@ -120,10 +182,13 @@ export function useCaseLayers() {
   // 重画本身只是把描述交给引擎，很轻。
   watch(provenanceOn, pushOverlay, { flush: 'sync' })
   watch(levelsOn, pushOverlay, { deep: true, flush: 'sync' })
+  watch(geometryOn, pushOverlay, { deep: true, flush: 'sync' })
 
   return {
     view, loading, error, spatial, steps, groups, reportLayer, components, arclines, timeline,
     levelsOn, provenanceOn, stepIndex, playing, currentStep, selectedDeliverable,
+    geometry, geometryOn, geometryError, changeLayer, baselineLayer, sitesLayer, siteFeatures,
+    notice, changeCounts, selectedSite, toggleGeometry, selectSite,
     load, clear, pushOverlay, togglePlayback, stopPlayback, selectStep, selectDeliverable, deliverableUrl
   }
 }
