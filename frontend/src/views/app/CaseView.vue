@@ -198,8 +198,8 @@ onMounted(async () => {
               <li v-for="d in deliverables" :key="d.deliverableId">
                 <span class="mono">{{ d.name }}</span>
                 <em class="tag">{{ typeLabel(d.role) }}</em>
-                <a v-if="d.deliverableId && d.role === 'knowledge'" class="link"
-                   :href="layers.deliverableUrl(d.deliverableId)" target="_blank" rel="noopener">查看报告 ↗</a>
+                <button v-if="d.deliverableId && d.role === 'knowledge'" class="link" type="button"
+                        @click="layers.openDeliverable(d.deliverableId)">查看报告 ↗</button>
               </li>
             </ul>
             <p v-else class="dim">{{ EMPTY.deliverables }}</p>

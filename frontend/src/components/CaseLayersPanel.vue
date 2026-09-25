@@ -282,10 +282,13 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
                 <div class="meta mono">{{ d.mediaType || '—' }} · {{ d.status }}</div>
               </div>
               <div class="acts">
-                <button class="icon-btn" type="button" title="查看报告" :disabled="!d.deliverableId"
+                <!-- ▤ 是"内嵌预览"：只有 HTML 报告能在 iframe 里显示。
+                     CSV 走浏览器就变成下载，点了像没反应 —— 所以那种只留 ↗。 -->
+                <button v-if="(d.mediaType || '').includes('html')" class="icon-btn" type="button"
+                        title="查看报告" :disabled="!d.deliverableId"
                         @click="l.selectDeliverable(d.deliverableId)">▤</button>
-                <a v-if="d.deliverableId" class="icon-btn" title="新窗口打开"
-                   :href="l.deliverableUrl(d.deliverableId)" target="_blank" rel="noopener">↗</a>
+                <button v-if="d.deliverableId" class="icon-btn" type="button" title="新窗口打开"
+                        @click="l.openDeliverable(d.deliverableId)">↗</button>
               </div>
             </div>
           </template>
@@ -331,7 +334,8 @@ const scoreText = (p) => (typeof p?.pc1 === 'number' && p.pc1 !== null
                 <div class="meta">在 L3 里点 ▤ 展开对应报告</div>
               </div>
             </div>
-            <iframe v-if="l.selectedDeliverable.value" :src="l.deliverableUrl(l.selectedDeliverable.value)"
+            <p v-if="l.reportError.value" class="muted">{{ l.reportError.value }}</p>
+            <iframe v-else-if="l.reportBlobUrl.value" :src="l.reportBlobUrl.value"
                     style="width:100%;height:260px;border:1px solid var(--e-line);border-radius:8px;background:#fff"
                     title="交付物报告"></iframe>
           </template>

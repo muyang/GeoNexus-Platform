@@ -191,6 +191,9 @@ export function useCaseLayers() {
 
   function clear() {
     stopPlayback(); view.value = null; geometry.value = {}; selectedSite.value = null
+    selectedDeliverable.value = null; reportBlobUrl.value = ''; reportError.value = ''
+    for (const url of blobUrls.values()) URL.revokeObjectURL(url)
+    blobUrls.clear()
     clearCaseOverlay()
   }
 
@@ -212,14 +215,58 @@ export function useCaseLayers() {
     stopPlayback()
     stepIndex.value = Math.max(0, Math.min(index, Math.max(steps.value.length - 1, 0)))
   }
-  function selectDeliverable(deliverableId) {
+  async function selectDeliverable(deliverableId) {
     selectedDeliverable.value = deliverableId
+    reportBlobUrl.value = ''; reportError.value = ''
+    if (deliverableId) {
+      try { reportBlobUrl.value = await deliverableBlobUrl(deliverableId) }
+      catch (e) { reportError.value = e.message }
+    }
     // L4：报告联动——选中交付物即展开它的报告面板
     if (deliverableId) levelsOn.value.L4 = true
   }
 
   /** 图层组（L3）里的每一项就是一个交付物，点它跳到报告。 */
   function deliverableUrl(id) { return caseApi.deliverableReportUrl(id) }
+
+  /** 交付物要用带令牌的请求取回来，再变成 blob URL。
+   *
+   *  为什么不能直接把 `/api/deliverables/:id/report` 放进 `<a href>` / `<iframe src>`：
+   *  那条接口要 `Authorization: Bearer`，而浏览器导航不会带自定义头 —— 结果是新窗口
+   *  里一个 401。交付物是案例的结论，点开必须真的能看到；所以这里取回字节、转成
+   *  blob URL 再用。blob 与页面同源，报告里的相对链接与内嵌资源不受影响。
+   */
+  const blobUrls = new Map()
+  const reportBlobUrl = ref('')
+  const reportError = ref('')
+
+  async function deliverableBlobUrl(id) {
+    if (!id) return ''
+    if (blobUrls.has(id)) return blobUrls.get(id)
+    const token = localStorage.getItem('gnx.token')
+    const res = await fetch(caseApi.deliverableReportUrl(id), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    })
+    if (!res.ok) throw new Error(res.status === 401 ? '需要登录后才能查看交付物' : `HTTP ${res.status}`)
+    const url = URL.createObjectURL(await res.blob())
+    blobUrls.set(id, url)
+    return url
+  }
+
+  async function openDeliverable(id) {
+    // 先同步开一个空白页，再填内容：`await` 之后调 window.open 不算用户手势，
+    // 多数浏览器会当成弹窗拦掉（点"查看报告"什么都没发生，是最难查的那种 bug）。
+    const win = window.open('', '_blank')
+    try {
+      const url = await deliverableBlobUrl(id)
+      if (!url) { win?.close(); return }
+      if (win) win.location.href = url
+      else window.location.href = url
+    } catch (e) {
+      win?.close()
+      error.value = e.message
+    }
+  }
 
   // flush: 'sync' —— 开关是给地图用的，异步 flush 会让人看到"点了没反应"。
   // 重画本身只是把描述交给引擎，很轻。
@@ -234,6 +281,7 @@ export function useCaseLayers() {
     geometry, geometryOn, geometryError, sitesLayer, sitesMeta, siteFeatures, visibleSites,
     hiddenByFilter, wetlandTotals, protectionTotals, wetlandOn, unprotectedOnly, siteFilter,
     notice, selectedSite, toggleGeometry, toggleWetland, selectSite,
-    load, clear, pushOverlay, togglePlayback, stopPlayback, selectStep, selectDeliverable, deliverableUrl
+    load, clear, pushOverlay, togglePlayback, stopPlayback, selectStep, selectDeliverable, deliverableUrl,
+    reportBlobUrl, reportError, openDeliverable
   }
 }
