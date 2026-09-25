@@ -9,7 +9,8 @@ import { caseApi } from '@/api'
 
 const ui = useUiStore(); const router = useRouter()
 const globeEl = ref(null)
-const { mount, ready, loading } = useMap()
+// 地球状态的说辞与地图/案例/工作台共用同一个 computed，避免同一状态四处在写四种话
+const { mount, ready, mapStatus } = useMap()
 const recommended = ref([])
 
 const abilities = [
@@ -40,7 +41,7 @@ onMounted(async () => {
         <p class="hg-hint">兴趣推荐 · 地表变化探索 · 体验演示向导</p>
       </div>
       <div ref="globeEl" class="hg-globe" aria-label="地球预览">
-        <span v-if="!ready" class="hg-globe-state">{{ loading ? '地球加载中…' : '地球未就绪' }}</span>
+        <span v-if="!ready" class="hg-globe-state">{{ mapStatus.text }}</span>
       </div>
     </div>
 
