@@ -1438,37 +1438,127 @@ test('种子脚本：把候鸟—湿地案例种进平台（开箱可见）', as
   assert.equal(detail.data.item.visibility, 'public');
   const view = (await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).data.view;
   assert.equal(view.spatial, true);
-  assert.deepEqual(view.bbox, [120.3, 32.6, 121.4, 33.4]);
-  // 组成项：4 个算子 + 3 份数据（含受限点位，图层视图从方案的 requires 推导）
+  // bbox 由 147 个真实坐标给出（论文补充材料 Table 3）
+  assert.deepEqual(view.bbox, [89.7, -10.05, 140.8, 50.2]);
+  // 组成项：5 个算子（原文五步）+ 3 份数据（两份公开 + 一份受限计数）
   const ids = view.components.map((c) => c.id);
-  assert.ok(ids.includes('geocard.eaaf.priority-sites-restricted'), '受限点位要在组成项里');
-  assert.ok(ids.includes('wetland-water-extent'));
+  for (const id of ['geocard.eaaf.rfi-priority-sites', 'geocard.eaaf.rfi-country-summary',
+    'geocard.eaaf.waterbird-counts-restricted']) {
+    assert.ok(ids.includes(id), `${id} 要在组成项里`);
+  }
+  for (const skill of ['rfi-framework-review', 'rfi-site-data', 'rfi-pc1-select',
+    'rfi-characterise', 'rfi-report']) {
+    assert.ok(ids.includes(skill), `${skill} 是原文五步之一`);
+  }
+  // 旧的合成 NDWI 演示已经移出这个案例：组成项与几何都不该再引用
+  assert.equal(ids.some((id) => id.includes('sample') || id.includes('wetland-imagery')), false);
+  assert.equal(ids.includes('geocard.eaaf.priority-sites-restricted'), false);
+  const dataComponents = view.components.filter((c) => c.role === 'data');
+  assert.equal(dataComponents.length, 3);
+  assert.equal(dataComponents.find((c) => c.id === 'geocard.eaaf.waterbird-counts-restricted').visibility,
+    'public', '开放演示模式下受限组成项也被放开');
+  // 组成项带名称：界面上的"所用数据"表要能读出这是什么数据
+  assert.ok(dataComponents.every((c) => c.title && c.title.length > 0));
   // 几何清单由平台给出受控地址，前端不自己拼路径
-  assert.deepEqual(view.geometry.map((g) => g.name).sort(),
-    ['sites', 'water_baseline', 'water_change']);
+  assert.deepEqual(view.geometry.map((g) => g.name), ['sites']);
   assert.ok(view.geometry.every((g) => g.url.startsWith(`/api/cases/${FLIGHTWAY_CASE}/geometry/`)));
+  // 处理过程：原文五步
+  assert.deepEqual(view.recipe.steps.map((s) => s.uses),
+    ['rfi-framework-review', 'rfi-site-data', 'rfi-pc1-select', 'rfi-characterise', 'rfi-report']);
+  assert.equal(view.recipe.recipeId, 'recipe://geonexus/eaaf-wetland-priority@2.0.0');
+  // 交付物：四个真实产物（三份 CSV + 一份报告）
+  const byName = Object.fromEntries(view.recipe.contract.map((p) => [p.name, p]));
+  assert.equal(byName.threshold_prc_mongolia.default, 10);
+  assert.equal(byName.threshold_others.default, 1);
+  assert.equal(byName.one_percent_rule.scope, 'fixed', '1% 规则是定义，不是可调阈值');
+  const groupRoles = view.layers.find((l) => l.kind === 'layer-group').groups.map((g) => g.role);
+  assert.deepEqual(groupRoles.sort(), ['data', 'knowledge']);
+  const deliverableNames = view.layers.find((l) => l.kind === 'layer-group')
+    .groups.flatMap((g) => g.items.map((i) => i.name)).sort();
+  assert.deepEqual(deliverableNames,
+    ['country_characteristics', 'priority_selection', 'priority_sites', 'report']);
 });
 
-test('几何接口：受控读取、格式正确、越权与越界都要拒', async () => {
+test('案例事实块：国别汇总（原文 Table 4）与两套保护口径都随案例返回', async () => {
+  await seedFlightway(['--public']);
+  const detail = await api(`/api/cases/${FLIGHTWAY_CASE}`, { token: adminToken });
+  const facts = detail.data.item.facts;
+  assert.ok(facts, '案例要带上公开事实块');
+  assert.equal(facts.country_summary.length, 10, '10 个亚洲国家');
+  assert.equal(facts.totals.priority_sites, 147);
+  assert.equal(facts.totals.coastal, 91);
+  assert.equal(facts.totals.inland, 56);
+  // 口径差异：正文 Table 4 的 108 vs 补充材料粗体标记的 117 —— 两个都保留，不做人工对齐
+  assert.equal(facts.totals.protected_table4, 108);
+  assert.equal(facts.totals.protected_bold_marks, 117);
+  assert.equal(facts.totals.protected_mark_gap, 9);
+  // 2 处 PRC 站点分值低于原文声明的阈值 10，却仍在公开名单里
+  assert.equal(facts.totals.prc_below_threshold, 2);
+  assert.equal(facts.totals.sites_without_pc1, 26, '蒙古 11 处只有名次 + PRC 15 处只有文字说明');
+  assert.match(facts.source.doi, /10\.1038\/s41598-025-31727-2/);
+  const view = (await api(`/api/cases/${FLIGHTWAY_CASE}/layers`)).data.view;
+  assert.equal(view.facts.totals.protected_bold_marks, 117, '图层视图也带同一份事实块');
+  // 研究区域：迁飞区 10 国
+  assert.equal(facts.region.countries.length, 10);
+  assert.deepEqual(facts.region.bbox, [89.7, -10.05, 140.8, 50.2]);
+});
+
+test('几何接口：147 个真实点位、属性齐全、越权与越界都要拒', async () => {
   await seedFlightway(['--public']);
   const res = await fetch(`${base}/api/cases/${FLIGHTWAY_CASE}/geometry/sites`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /geo\+json/);
   const fc = await res.json();
   assert.equal(fc.type, 'FeatureCollection');
-  assert.equal(fc.features.length, 8);
-  // 每个要素都带 synthetic：界面上的"合成为示意"标注从数据来
-  assert.ok(fc.features.every((f) => f.properties.synthetic === true));
+  assert.equal(fc.features.length, 147, '147 处优先湿地，一个点一处');
+
+  // 期望的属性集：界面（颜色/大小/筛选/详情）就靠这些字段
+  const required = ['site_id', 'name', 'country', 'wetland_type', 'protected', 'pc1', 'rank',
+    'species_count', 'designations', 'threatened'];
+  for (const feature of fc.features) {
+    const props = feature.properties;
+    assert.equal(feature.geometry.type, 'Point');
+    assert.equal(feature.geometry.coordinates.length, 2);
+    for (const key of required) assert.ok(key in props, `要素缺字段 ${key}`);
+    assert.equal(typeof props.protected, 'boolean');
+    assert.equal(typeof props.wetland_type, 'string');
+    assert.ok(['coastal', 'inland'].includes(props.wetland_type));
+    assert.ok(props.pc1 === null || typeof props.pc1 === 'number');
+    assert.ok(props.rank === null || typeof props.rank === 'number');
+    assert.equal(typeof props.species_count, 'number');
+    // 真实公布的坐标：不带 synthetic 标记（那是合成/示意数据的约定）
+    assert.equal('synthetic' in props, false);
+  }
+
+  // 与论文一致的分项合计
+  const coastal = fc.features.filter((f) => f.properties.wetland_type === 'coastal').length;
+  const inland = fc.features.filter((f) => f.properties.wetland_type === 'inland').length;
+  const protectedBold = fc.features.filter((f) => f.properties.protected === true).length;
+  const noScore = fc.features.filter((f) => f.properties.pc1 === null).length;
+  assert.equal(coastal, 91);
+  assert.equal(inland, 56);
+  assert.equal(protectedBold, 117, '补充材料粗体标记');
+  assert.equal(noScore, 26, '没有 PC1 的站点必须保留为 null，不能填 0');
+  // 蒙古 11 处只有名次 1–11
+  const mongolia = fc.features.filter((f) => f.properties.country === 'Mongolia');
+  assert.equal(mongolia.length, 11);
+  assert.deepEqual(mongolia.map((f) => f.properties.rank).sort((a, b) => a - b),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  // 大小分档随几何一起给出（前端两个引擎都用它，不各自重算）
+  assert.ok(fc.features.every((f) => typeof f.properties.pc1_band === 'string'));
   const top = [...fc.features].sort((a, b) => b.properties.pc1 - a.properties.pc1)[0];
-  assert.ok(top.properties.pc1 > 0 && top.properties.pc1_band);
-  assert.ok(top.properties.species_meeting_1pct > 0);
+  assert.ok(top.properties.pc1 > 800, '最高分值来自原文（825.49）');
+  assert.equal(top.properties.pc1_band, 'xl');
+  assert.ok(top.properties.species_count > 0);
 
   // 不存在的几何 → 404（不是 500，也不是空文件）
   assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/nope`)).status, 404);
+  // 退役的合成图层：接口不该再认它们（陈旧文件留在 uploads/ 也没关系）
+  assert.equal((await api(`/api/cases/${FLIGHTWAY_CASE}/geometry/water_change`)).status, 404);
 });
 
-test('可见性分层：受限点位在场时访客拿不到案例，也拿不到几何', async () => {
-  await seedFlightway([]);   // 默认模式：精确点位敏感度 restricted
+test('可见性分层：受限组成项在场时访客拿不到案例，也拿不到几何', async () => {
+  await seedFlightway([]);   // 默认模式：逐笔计数数据敏感度 restricted
   const anonCase = await api(`/api/cases/${FLIGHTWAY_CASE}`);
   assert.equal(anonCase.status, 404, '组合含受限组成项 ⇒ 对外不存在');
   assert.equal(anonCase.data.error, '案例不存在');
@@ -1482,6 +1572,8 @@ test('可见性分层：受限点位在场时访客拿不到案例，也拿不�
   assert.equal(adminView.status, 200);
   assert.equal(adminView.data.view.visibility.visibility, 'restricted');
   assert.deepEqual(adminView.data.view.visibility.missing, []);
+  assert.equal(adminView.data.view.visibility.levels['geocard.eaaf.waterbird-counts-restricted'],
+    'restricted', '受限的是那份逐笔计数数据');
   // 收尾：恢复开放演示，避免影响后续用例
   await seedFlightway(['--public']);
 });

@@ -1,5 +1,5 @@
 import { getBasemap } from '../basemaps'
-import { PC1_BANDS, WATER_CLASS_STYLE } from '../caseStyle'
+import { SIZE_BANDS, pc1Band, wetlandStyle } from '../caseStyle'
 
 /** Cesium 后端：3D 地球（默认）。
  *
@@ -174,9 +174,12 @@ export function createCesiumEngine(state) {
 
   /** 案例叠加层：AOI 面（L1）、组成项（数据范围）、血缘弧线（默认关）。
    *  与 GeoCard 图层分开管理：选中哪个案例只影响这一层，不重画整个目录。 */
-  /** 把 GeoJSON 画上地球：面按 class 配色，点按 PC1 分级定大小与颜色。
+  /** 把 GeoJSON 画上地球：**颜色 = 湿地类型（沿海/内陆）、大小 = PC1 分档**。
    *  几何是异步加载的（GeoJsonDataSource.load 返回 Promise），所以与 bbox 那条
-   *  同步路径分开；画不出来也不该影响底图。 */
+   *  同步路径分开；画不出来也不该影响底图。
+   *
+   *  筛选（湿地类型开关注 + 只看未与保护地重叠）与面板用同一个 `overlay.siteFilter`：
+   *  面板筛掉的点，地球上也要消失 —— 两边不一致等于给出两个答案。 */
   async function drawCaseGeometry(overlay) {
     const Cesium = CesiumMod
     if (!viewer || !Cesium) return
@@ -187,6 +190,15 @@ export function createCesiumEngine(state) {
     }
     const geometry = (overlay && overlay.geometry) || {}
     const visible = (overlay && overlay.visible) || {}
+    const filter = (overlay && overlay.siteFilter) || {}
+    const passesFilter = (props) => {
+      const type = props.wetland_type
+      if (type === 'coastal' || type === 'inland') {
+        if (Array.isArray(filter.types) && !filter.types.includes(type)) return false
+      } else if (Array.isArray(filter.types) && !filter.types.length) return false
+      if (filter.unprotectedOnly && props.protected === true) return false
+      return true
+    }
     const add = async (name, options) => {
       if (!geometry[name] || visible[name] === false) return
       const source = await Cesium.GeoJsonDataSource.load(geometry[name], options)
@@ -194,45 +206,33 @@ export function createCesiumEngine(state) {
       await viewer.dataSources.add(source)
       caseDataSources.set(name, source)
     }
-    await add('water_baseline', {
-      stroke: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.stable.color).withAlpha(0.8),
-      fill: Cesium.Color.TRANSPARENT, strokeWidth: 2
-    })
-    await add('water_change', {
-      stroke: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.loss.color).withAlpha(1),
-      fill: Cesium.Color.fromCssColorString(WATER_CLASS_STYLE.loss.color).withAlpha(WATER_CLASS_STYLE.loss.opacity),
-      strokeWidth: 1.5
-    })
+    // 147 个点：白色符号 + 逐实体着色，颜色只表达湿地类型这一件事
     await add('sites', {
-      markerSymbol: 'o', markerColor: Cesium.Color.fromCssColorString(PC1_BANDS.high.color),
-      markerSize: 24, stroke: Cesium.Color.WHITE.withAlpha(0.9), strokeWidth: 1
+      markerSymbol: 'o', markerColor: Cesium.Color.WHITE,
+      markerSize: 28, stroke: Cesium.Color.WHITE.withAlpha(0.9), strokeWidth: 1
     })
     for (const source of caseDataSources.values()) {
       for (const entity of source.entities.values) {
         const props = entity.properties && entity.properties.getValue
           ? entity.properties.getValue(Cesium.JulianDate.now()) : {}
-        if (props && props.class && WATER_CLASS_STYLE[props.class]) {
-          const style = WATER_CLASS_STYLE[props.class]
-          if (entity.polygon) {
-            entity.polygon.material = Cesium.Color.fromCssColorString(style.color).withAlpha(style.opacity)
-            // 碎片化的水面斑块在卫星底图上单靠填充不够醒目：同色描边让边界可读
-            if (entity.polygon.outline !== undefined) {
-              entity.polygon.outline = true
-              entity.polygon.outlineColor = Cesium.Color.fromCssColorString(style.color)
-              entity.polygon.outlineWidth = 2
-            }
-          }
-          entity.description = style.label + '（' + (props.pixels || 0) + ' 像元）'
+        if (!props || !props.site_id) continue
+        const type = wetlandStyle(props.wetland_type)
+        const band = SIZE_BANDS[props.pc1_band || pc1Band(props.pc1)] || SIZE_BANDS.xs
+        if (entity.billboard) {
+          entity.billboard.color = Cesium.Color.fromCssColorString(type.color)
+          entity.billboard.scale = band.radius / 8
+          // 筛选：不通过的点直接不画（与面板同一套条件）
+          entity.show = passesFilter(props)
+        } else if (entity.point) {
+          entity.point.color = Cesium.Color.fromCssColorString(type.color)
+          entity.point.pixelSize = band.radius * 2
+          entity.show = passesFilter(props)
         }
-        if (props && props.pc1 !== undefined) {
-          const band = PC1_BANDS[props.pc1_band] || PC1_BANDS.low
-          if (entity.billboard) {
-            entity.billboard.color = Cesium.Color.fromCssColorString(band.color)
-            entity.billboard.scale = band.radius / 8
-          }
-          entity.description = (props.name || props.site_id) + '　PC1 ' + props.pc1
-            + '　达标种群 ' + props.species_meeting_1pct
-        }
+        const score = typeof props.pc1 === 'number' && props.pc1 !== null
+          ? `PC1 ${props.pc1}`
+          : (props.rank !== null && props.rank !== undefined ? `原文未公布分值（名次 ${props.rank}）` : '原文未公布分值')
+        entity.description = `${props.name || props.site_id}　${props.country || ''}　${type.label}　${score}`
+          + `　达标物种 ${props.species_count}`
       }
     }
     document.documentElement.dataset.caseGeometry = String(caseDataSources.size)

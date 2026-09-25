@@ -1,7 +1,9 @@
 import { computed, ref, watch } from 'vue'
 import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
-import { GEOMETRY_LAYERS, sortedSiteFeatures, syntheticNotice, waterClassCounts } from '@/composables/caseStyle'
+import {
+  GEOMETRY_LAYERS, protectionCounts, sortedSiteFeatures, syntheticNotice, wetlandCounts
+} from '@/composables/caseStyle'
 
 /** 案例图层：四级 LOD + 双时间轴 + 血缘弧线。
  *
@@ -15,8 +17,9 @@ import { GEOMETRY_LAYERS, sortedSiteFeatures, syntheticNotice, waterClassCounts 
  *   3. **血缘弧线**：默认**关**。一开就是一堆线，默认开等于默认看不清；
  *      而且只画当前选中的那一个案例（画全部案例的弧线既慢又没意义）。
  *
- *  **非空间案例**（没有 bbox）不进地球：它们进侧栏。硬塞到地图上只会给出一个
- *  假的位置。
+ *  **筛选也是数据面的一部分**：湿地类型与"只看未与保护地重叠"两个开关既过滤面板
+ *  列表，也交给引擎过滤地球上的点 —— 两边用同一个 `siteFilter`，不允许"面板筛了、
+ *  地球没筛"。非空间案例（没有 bbox）不进地球：它们进侧栏。
  */
 
 export function useCaseLayers() {
@@ -31,6 +34,10 @@ export function useCaseLayers() {
   const geometryOn = ref(Object.fromEntries(GEOMETRY_LAYERS.map((l) => [l.name, l.defaultOn])))
   /** 被点选的地点（点地图上的点或点列表里的行都会设它） */
   const selectedSite = ref(null)
+
+  // 筛选：按湿地类型（颜色）与保护状态。默认全看 —— 先看全貌，再收窄。
+  const wetlandOn = ref({ coastal: true, inland: true })
+  const unprotectedOnly = ref(false)
 
   // 四级 LOD：默认只开 L1+L2（先看清范围与步骤），L3/L4 随选择展开。
   const levelsOn = ref({ L1: true, L2: true, L3: true, L4: true })
@@ -68,12 +75,32 @@ export function useCaseLayers() {
   })
 
   /** 案例几何的派生视图（面板与引擎共用这一份，不各自过滤） */
-  const changeLayer = computed(() => geometry.value.water_change || null)
-  const baselineLayer = computed(() => geometry.value.water_baseline || null)
   const sitesLayer = computed(() => geometry.value.sites || null)
   const siteFeatures = computed(() => sortedSiteFeatures(sitesLayer.value))
   const notice = computed(() => syntheticNotice(geometry.value))
-  const changeCounts = computed(() => waterClassCounts(changeLayer.value))
+  /** 图层自带的元数据（来源、图例、合计）：由平台受控接口随几何描述一起给 */
+  const sitesMeta = computed(() => sitesLayer.value?.properties || sitesLayer.value?.metadata || {})
+  const wetlandTotals = computed(() => wetlandCounts(sitesLayer.value))
+  const protectionTotals = computed(() => protectionCounts(sitesLayer.value))
+  /** 筛选条件（面板与引擎共用）：类型开关 + 只看未与保护地重叠 */
+  const siteFilter = computed(() => ({
+    types: Object.keys(wetlandOn.value).filter((k) => wetlandOn.value[k]),
+    unprotectedOnly: unprotectedOnly.value
+  }))
+  /** 通过筛选的站点：面板列这个，引擎也画这个 */
+  const visibleSites = computed(() => siteFeatures.value.filter(passesFilter))
+  const hiddenByFilter = computed(() => siteFeatures.value.length - visibleSites.value.length)
+
+  function passesFilter(feature) {
+    const props = feature?.properties || {}
+    const type = props.wetland_type
+    // 只有沿海/内陆两类受开关控制；未标注类型的点跟着"至少开一类"走，不被静默丢掉
+    if (type === 'coastal' || type === 'inland') {
+      if (wetlandOn.value[type] === false) return false
+    } else if (!siteFilter.value.types.length) return false
+    if (unprotectedOnly.value && props.protected === true) return false
+    return true
+  }
 
   function pushOverlay() {
     if (!spatial.value) { clearCaseOverlay(); return }
@@ -82,12 +109,15 @@ export function useCaseLayers() {
         aoi: view.value.bbox,
         components: components.value,
         geometry: geometry.value,
-        visible: geometryOn.value
+        visible: geometryOn.value,
+        // 筛选条件随叠加层一起给引擎：地球上的点和面板列表必须用同一套条件
+        siteFilter: siteFilter.value
       },
       {
         provenance: provenanceOn.value && levelsOn.value.L1,
         onFeatureClick: (properties) => {
-          if (properties && properties.pc1 !== undefined) selectedSite.value = properties
+          // 只把"地点"要素当成选中：水的旧要素没有 site_id，点到它不该清空已选地点
+          if (properties && properties.site_id) selectedSite.value = properties
         }
       }
     )
@@ -102,7 +132,10 @@ export function useCaseLayers() {
       try {
         const response = await fetch(item.url, { headers: { accept: 'application/geo+json, application/json' } })
         if (!response.ok) throw new Error('HTTP ' + response.status)
-        return { name: item.name, data: await response.json() }
+        const data = await response.json()
+        // 图层元数据（来源/图例/合计）在图层描述里，几何本身只是 FeatureCollection：
+        // 合并成一份，面板读 `properties` 就能拿到"这份数据从哪来"
+        return { name: item.name, data: { ...data, properties: item.properties || {} } }
       } catch (e) {
         return { name: item.name, error: e.message }
       }
@@ -123,12 +156,22 @@ export function useCaseLayers() {
     geometryOn.value = { ...geometryOn.value, [name]: next }
   }
 
+  /** 湿地类型开关（颜色图例点一下就能只留一类）。 */
+  function toggleWetland(type, on) {
+    if (type !== 'coastal' && type !== 'inland') return
+    const next = on === undefined ? !wetlandOn.value[type] : Boolean(on)
+    wetlandOn.value = { ...wetlandOn.value, [type]: next }
+  }
+
   function selectSite(properties) { selectedSite.value = properties || null }
 
   async function load(caseId) {
     stopPlayback()
     selectedDeliverable.value = null
     stepIndex.value = 0
+    selectedSite.value = null
+    wetlandOn.value = { coastal: true, inland: true }
+    unprotectedOnly.value = false
     error.value = ''
     if (!caseId) { view.value = null; clearCaseOverlay(); return null }
     loading.value = true
@@ -183,12 +226,14 @@ export function useCaseLayers() {
   watch(provenanceOn, pushOverlay, { flush: 'sync' })
   watch(levelsOn, pushOverlay, { deep: true, flush: 'sync' })
   watch(geometryOn, pushOverlay, { deep: true, flush: 'sync' })
+  watch([wetlandOn, unprotectedOnly], pushOverlay, { deep: true, flush: 'sync' })
 
   return {
     view, loading, error, spatial, steps, groups, reportLayer, components, arclines, timeline,
     levelsOn, provenanceOn, stepIndex, playing, currentStep, selectedDeliverable,
-    geometry, geometryOn, geometryError, changeLayer, baselineLayer, sitesLayer, siteFeatures,
-    notice, changeCounts, selectedSite, toggleGeometry, selectSite,
+    geometry, geometryOn, geometryError, sitesLayer, sitesMeta, siteFeatures, visibleSites,
+    hiddenByFilter, wetlandTotals, protectionTotals, wetlandOn, unprotectedOnly, siteFilter,
+    notice, selectedSite, toggleGeometry, toggleWetland, selectSite,
     load, clear, pushOverlay, togglePlayback, stopPlayback, selectStep, selectDeliverable, deliverableUrl
   }
 }

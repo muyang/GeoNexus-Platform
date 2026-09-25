@@ -1,7 +1,7 @@
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { getBasemap } from '../basemaps'
-import { PC1_BANDS, WATER_CLASS_STYLE } from '../caseStyle'
+import { SIZE_BANDS, SIZE_BAND_ORDER, UNKNOWN_WETLAND, WETLAND_STYLE } from '../caseStyle'
 
 /** MapLibre 后端（矢量/栅格底图 + 2D 地图）。
  *  状态由 facade 注入，本模块不持有全局单例 —— 这样引擎可以在运行时切换。 */
@@ -125,36 +125,40 @@ export function createMaplibreEngine(state, hooks = {}) {
   }
 
   /** 案例叠加层：AOI（L1）+ 组成项范围 + 血缘弧线（默认关）。 */
-  /** 把 GeoJSON 画上地图：面按 class 配色，点按 PC1 分级（MapLibre 直接用 geojson source）。 */
+  /** 把 GeoJSON 画上地图：**颜色 = 湿地类型、大小 = PC1 分档**（MapLibre 直接用 geojson source）。
+   *  筛选条件取自 `overlay.siteFilter`，与面板列表同一套 —— 两边不一致等于给出两个答案。 */
   function drawCaseGeometry(overlay) {
     const mp = map.value
     if (!mp) return
     const geometry = (overlay && overlay.geometry) || {}
     const visible = (overlay && overlay.visible) || {}
-    const ids = ['water_change', 'water_baseline', 'sites']
+    const filter = (overlay && overlay.siteFilter) || {}
+    const types = Array.isArray(filter.types) ? filter.types : ['coastal', 'inland']
+    // 只有沿海/内陆两类受开关控制；未标注类型的点跟着"至少开一类"走
+    const typeFilter = ['any', ['in', ['get', 'wetland_type'], ['literal', types]],
+      ['!', ['in', ['get', 'wetland_type'], ['literal', ['coastal', 'inland']]]]]
+    const expression = ['all', typeFilter]
+    if (filter.unprotectedOnly) expression.push(['!=', ['get', 'protected'], true])
+    const ids = ['sites']
     for (const name of ids) {
       if (mp.getLayer('lyr-case-' + name)) mp.removeLayer('lyr-case-' + name)
       if (mp.getSource('src-case-' + name)) mp.removeSource('src-case-' + name)
       if (!geometry[name] || visible[name] === false) continue
       mp.addSource('src-case-' + name, { type: 'geojson', data: geometry[name] })
-      if (name === 'sites') {
-        mp.addLayer({ id: 'lyr-case-sites', type: 'circle', source: 'src-case-sites', paint: {
-          'circle-radius': ['match', ['get', 'pc1_band'], 'high', PC1_BANDS.high.radius,
-            'medium', PC1_BANDS.medium.radius, PC1_BANDS.low.radius],
-          'circle-color': ['match', ['get', 'pc1_band'], 'high', PC1_BANDS.high.color,
-            'medium', PC1_BANDS.medium.color, PC1_BANDS.low.color],
+      const colorMatch = ['match', ['get', 'wetland_type'],
+        'coastal', WETLAND_STYLE.coastal.color,
+        'inland', WETLAND_STYLE.inland.color,
+        UNKNOWN_WETLAND.color]
+      const radiusMatch = ['match', ['get', 'pc1_band'],
+        ...SIZE_BAND_ORDER.flatMap((key) => [key, SIZE_BANDS[key].radius]),
+        SIZE_BANDS.xs.radius]
+      mp.addLayer({ id: 'lyr-case-' + name, type: 'circle', source: 'src-case-' + name,
+        filter: expression, paint: {
+          'circle-radius': radiusMatch,
+          'circle-color': colorMatch,
           'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.2,
           'circle-opacity': 0.95
         } })
-      } else {
-        mp.addLayer({ id: 'lyr-case-' + name, type: 'fill', source: 'src-case-' + name, paint: {
-          'fill-color': ['match', ['get', 'class'], 'loss', WATER_CLASS_STYLE.loss.color,
-            'gain', WATER_CLASS_STYLE.gain.color, WATER_CLASS_STYLE.stable.color],
-          'fill-opacity': name === 'water_baseline' ? 0 : WATER_CLASS_STYLE.loss.opacity,
-          'fill-outline-color': ['match', ['get', 'class'], 'loss', WATER_CLASS_STYLE.loss.color,
-            'gain', WATER_CLASS_STYLE.gain.color, WATER_CLASS_STYLE.stable.color]
-        } })
-      }
     }
     document.documentElement.dataset.caseGeometry = String(
       ids.filter((name) => mp.getLayer('lyr-case-' + name)).length)
@@ -205,13 +209,13 @@ export function createMaplibreEngine(state, hooks = {}) {
 
   function clearCaseOverlay() { syncCaseOverlay(null) }
 
-  /** 点击地点 → 面板：只把带 pc1 的要素交上去。挂一次就够了。 */
+  /** 点击地点 → 面板：只把带 site_id 的要素交上去（点的属性里有地点标识）。挂一次就够了。 */
   function bindCaseClicks() {
     const mp = map.value
     if (!mp || mp.__gnxCaseClick) return
     mp.__gnxCaseClick = true
     mp.on('click', (event) => {
-      const layers = ['lyr-case-sites', 'lyr-case-water_change'].filter((id) => mp.getLayer(id))
+      const layers = ['lyr-case-sites'].filter((id) => mp.getLayer(id))
       if (!layers.length) return
       const hits = mp.queryRenderedFeatures(event.point, { layers })
       if (hits.length && featureClick) featureClick(hits[0].properties)

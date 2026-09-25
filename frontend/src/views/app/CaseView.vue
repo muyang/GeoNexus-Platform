@@ -18,7 +18,7 @@ import { caseApi } from '@/api'
 import { useMap } from '@/composables/map'
 import { useCaseLayers } from '@/composables/caseLayers'
 import { useAuthStore } from '@/stores/auth'
-import { visibilityTag, scopeTag, runTag, dataOriginTag, EMPTY } from '@/lib/labels'
+import { visibilityTag, scopeTag, runTag, dataOriginTag, typeLabel, EMPTY } from '@/lib/labels'
 
 const route = useRoute(); const router = useRouter(); const auth = useAuthStore()
 const mapEl = ref(null)
@@ -69,6 +69,20 @@ async function runRecipe() {
 const components = computed(() => layers.components.value || [])
 const dataComponents = computed(() => components.value.filter((c) => c.role !== 'skill' && c.role !== 'compute'))
 const operatorComponents = computed(() => components.value.filter((c) => c.role === 'skill' || c.role === 'compute'))
+/** 研究区域的 bbox **取自数据组成项**（案例范围就是这份数据覆盖到哪里），
+ *  不是编辑手填的一个数 —— 手填的框和实际点位对不上时，用户只会以为是地图错了。 */
+const regionCard = computed(() =>
+  dataComponents.value.find((c) => c.id === 'geocard.eaaf.rfi-priority-sites')
+  || dataComponents.value.find((c) => Array.isArray(c.bbox)) || null)
+const regionBbox = computed(() => regionCard.value?.bbox || detail.value?.bbox || null)
+/** 案例自带的公开事实块（合计数字来自论文表格，不是平台算的） */
+const facts = computed(() => layers.view.value?.facts || detail.value?.facts || null)
+const headline = computed(() => {
+  const t = facts.value?.totals
+  if (!t) return null
+  return `优先湿地 ${t.priority_sites} 处 · 沿海 ${t.coastal} / 内陆 ${t.inland} · `
+    + `与保护地重叠 ${t.protected_bold_marks} 处 · 达到 1% 的物种记录 ${t.species_reaching_1pct} 条`
+})
 const recipe = computed(() => layers.view.value?.recipe || null)
 const steps = computed(() => recipe.value?.steps || [])
 const stepRuns = computed(() => {
@@ -76,7 +90,10 @@ const stepRuns = computed(() => {
   for (const s of layers.steps.value) map[s.stepId] = s
   return map
 })
-const deliverables = computed(() => (layers.groups.value || []).flatMap((g) => g.items))
+// 交付物按角色分组回来（groups），但列表要按"一项一行"读：把角色带下来，
+// 否则每一行都显示不出自己的角色（改版前这里读 d.role 一直是 undefined）。
+const deliverables = computed(() => (layers.groups.value || [])
+  .flatMap((g) => g.items.map((item) => ({ ...item, role: g.role }))))
 
 onMounted(async () => {
   await mount(mapEl.value)
@@ -117,8 +134,9 @@ onMounted(async () => {
           <span class="tag" :class="isLive(detail) ? 'tag-live' : 'tag-arch'">
             {{ isLive(detail) ? '实测运行' : '存档案例' }}
           </span>
-          <span v-if="layers.notice.value" class="tag" :class="dataOriginTag(true).cls">
-            {{ dataOriginTag(true).text }}
+          <!-- 数据来源：从几何里读，不靠人记得加。真实数据没有 synthetic 标记 ⇒ 显示"真实数据" -->
+          <span v-if="layers.siteFeatures.value.length" class="tag" :class="dataOriginTag(false).cls">
+            {{ dataOriginTag(false).text }}
           </span>
           <div class="dossier-actions">
             <button class="btn-ghost" type="button" :disabled="runState.busy || !auth.loggedIn"
@@ -134,18 +152,25 @@ onMounted(async () => {
           <!-- 左列：文档式字段 -->
           <div class="col-text">
             <h3>研究区域</h3>
-            <p class="field">{{ detail.aoi || '未声明' }}</p>
+            <p class="field">{{ detail.aoi || facts?.region?.label || '未声明' }}</p>
+            <p v-if="headline" class="field dim">{{ headline }}</p>
+            <p class="field mono dim">
+              数据范围（取自 {{ regionCard?.id || '案例 bbox' }}）：
+              {{ regionBbox ? regionBbox.map((n) => n.toFixed(2)).join(', ') : '—' }}
+              <template v-if="facts?.region?.countries?.length"> · {{ facts.region.countries.length }} 国：{{ facts.region.countries.join('、') }}</template>
+            </p>
 
             <h3>问题</h3>
             <p class="field">{{ detail.question || '未声明' }}</p>
 
             <h3>所用数据</h3>
             <table v-if="dataComponents.length" class="kv-table">
-              <thead><tr><th>资产</th><th>角色</th><th>可见性</th><th>范围</th></tr></thead>
+              <thead><tr><th>资产</th><th>名称</th><th>角色</th><th>可见性</th><th>范围</th></tr></thead>
               <tbody>
                 <tr v-for="c in dataComponents" :key="c.id">
                   <td class="mono">{{ c.id }}</td>
-                  <td>{{ c.role }}</td>
+                  <td>{{ c.title || '—' }}</td>
+                  <td>{{ typeLabel(c.role) }}</td>
                   <td><em class="tag" :class="visibilityTag(c.visibility).cls">{{ visibilityTag(c.visibility).text }}</em></td>
                   <td class="mono">{{ c.bbox ? c.bbox.map((n) => n.toFixed(1)).join(', ') : '—' }}</td>
                 </tr>
@@ -172,7 +197,7 @@ onMounted(async () => {
             <ul v-if="deliverables.length" class="deliverables">
               <li v-for="d in deliverables" :key="d.deliverableId">
                 <span class="mono">{{ d.name }}</span>
-                <em class="tag">{{ d.role }}</em>
+                <em class="tag">{{ typeLabel(d.role) }}</em>
                 <a v-if="d.deliverableId && d.role === 'knowledge'" class="link"
                    :href="layers.deliverableUrl(d.deliverableId)" target="_blank" rel="noopener">查看报告 ↗</a>
               </li>
